@@ -11,7 +11,7 @@ and arrive here as task specs.
 
 ## Architecture state
 
-**Phase 1.B + 1.B.1 + 1.D.0 + 1.D + 1.D.1 — complete.**
+**Phase 1.B + 1.B.1 + 1.D.0 + 1.D + 1.D.1 + 1.D.2 + 1.D.4 — complete.**
 
 - Dual transport: **stdio** (default) and **Streamable HTTP** (`--transport http`),
   both backed by the official `mcp` Python SDK
@@ -57,13 +57,27 @@ and arrive here as task specs.
   on config errors (e.g. malformed `OAUTH_SIGNING_KEY`) so misconfiguration
   surfaces in `systemctl status` rather than masquerading as a running
   service.
+- **`OAUTH_AUDIENCE` MUST include a trailing slash** in HTTP mode:
+  `https://citation-mcp.digitalsurgeon.dev/`. claude.ai's connector
+  constructs the RFC 8707 `resource` parameter as `<server-base>/` and
+  performs a *strict* client-side `aud == resource` string comparison.
+  Without the slash, claude.ai rejects every access token before
+  presenting it and the connector loops forever in
+  refresh-grant → 401 → refresh-grant. `OAUTH_ISSUER` is *not* affected
+  (it's never compared as a client-side resource).
+- Connector is **live at `https://citation-mcp.digitalsurgeon.dev`** as a
+  claude.ai custom connector. The OFID is registered to
+  `dr.ankitsarin@gmail.com`'s account; first connect was 09:35:24 UTC,
+  first successful `tools/call` was 09:41:25 UTC (cache hit, ~14 ms
+  server-side).
 
 **Future phases (not yet built):**
 
 - **1.C** — additional citation-integrity tools per the phasing schedule
   maintained in `claude.ai`
-- **1.D.4** — register the server with `claude.ai` as a custom connector
-  and verify the end-to-end OAuth flow from a connected conversation
+- **1.D.2** — observability gaps surfaced during 1.D.4 bring-up: log
+  verifier-failure reason (currently swallowed in `TokenVerifier`); log
+  tool-name on `CallToolRequest`; orphan-DCR-client cleanup endpoint
 
 ## Database query policy
 
@@ -93,7 +107,7 @@ and arrive here as task specs.
 | `CITATION_MCP_LOG_LEVEL` | `INFO` | Python logging level | n/a |
 | `OAUTH_SIGNING_KEY` | (none) | HS256 signing key (hex, ≥32 bytes) — **required** in HTTP mode | HTTP server refuses to start |
 | `OAUTH_ISSUER` | `https://citation-mcp.digitalsurgeon.dev` | OAuth 2.1 issuer URL surfaced in AS metadata | falls back to issuer default |
-| `OAUTH_AUDIENCE` | same as issuer | JWT `aud` claim | n/a |
+| `OAUTH_AUDIENCE` | same as issuer | JWT `aud` claim — **must end in `/`** when fronting claude.ai (see "Production deployment") | n/a |
 | `OAUTH_DB_PATH` | `~/projects/citation-mcp/data/oauth.db` | aiosqlite store for clients, codes, refresh tokens | n/a |
 | `OAUTH_ALLOW_MISSING_CF_EMAIL` | `false` | Dev escape hatch — bypass `Cf-Access-Authenticated-User-Email` requirement | n/a |
 | `MCP_ORIGIN_ALLOWLIST` | `https://claude.ai` | CSV of allowed Origins for `POST /mcp` (CVE-2026-33252) | n/a |
@@ -204,6 +218,38 @@ explicit deployment spec, not as part of a code change.
   in the architecture-state section above. v0.3.1 is deployment-only;
   no code changes from v0.3.0.
 
+## Phase 1.D.2 / 1.D.4 refinements (vs. 1.D.1)
+
+- **SDK transport_security host check disabled** (v0.3.2, `b9c50aa`).
+  `FastMCP.__init__` auto-enables DNS rebinding protection with a
+  localhost-only allowlist (`127.0.0.1:*`, `localhost:*`, `[::1]:*`)
+  when its `host` arg defaults to `127.0.0.1` — which 421s any traffic
+  forwarded from a reverse proxy with the public Host header. Our outer
+  `HostHeaderMiddleware` already validates against `MCP_HOST_ALLOWLIST`,
+  so the SDK's redundant copy is explicitly disabled by passing
+  `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`
+  to `FastMCP()` in `http_app.py`.
+- **Regression test** (`test_authenticated_mcp_with_public_host_is_not_421`)
+  exercises this code path with a valid bearer + an allowlisted non-
+  localhost Host. Crucial because the SDK's check runs *after* our auth
+  middleware — so unauthenticated tests would never exercise it.
+- **Trailing-slash audience requirement** documented in the Production
+  deployment block above. Discovered during 1.D.4 bring-up by tracing a
+  refresh-grant loop that the test suite couldn't reproduce — claude.ai's
+  client-side aud-vs-resource check is the missing third party.
+- **Refresh tokens survive `OAUTH_SIGNING_KEY` rotation.** Refresh tokens
+  are opaque random strings stored as sha256 hex; the signing key only
+  signs JWT *access* tokens. After rotation, the next `/oauth/token`
+  refresh-grant succeeds normally and issues a new access token signed
+  with the new key. Useful for incident response (rotate key without
+  invalidating user sessions).
+- **claude.ai connector flow verified end-to-end.** `/mcp` 200 from a
+  real connected conversation at 09:35:24 UTC; `tools/call` cache-hit
+  in ~14 ms server-side at 09:41:25 UTC. The connector pipeline
+  exchanges through five distinct DCR clients during bring-up retries
+  (no client-side reuse) — the orphan DCR-client cleanup is deferred to
+  1.D.2.
+
 ## Phase 1.B / 1.B.1 known limitations
 
 - **Single-string author input + non-Western name order.** `parse_author_string`
@@ -228,3 +274,23 @@ explicit deployment spec, not as part of a code change.
   sensitive names to `***` in `httpx` INFO logs. Plus 1.D's
   `reraise_redacted(httpx.HTTPStatusError)` wrap at every
   `raise_for_status()` site so URLs in exception strings are also scrubbed.
+
+## Phase 1.D.1 / 1.D.4 known limitations (1.D.2 backlog)
+
+- **Verifier failure reason is not logged.** `CitationMcpTokenVerifier`
+  catches every `InvalidTokenError` and returns `None` to the SDK, which
+  emits a canned 401 with no detail. From the journal alone it's
+  impossible to distinguish "no Authorization header" from "expired" /
+  "bad signature" / "wrong audience". A one-line `logger.warning` in the
+  except clause would close this — diagnostic gap, not a security issue.
+- **Tool name is not logged on `CallToolRequest`.** The SDK logs
+  `Processing request of type CallToolRequest` at INFO but omits the
+  tool name. Identifying which of the three tools was called requires
+  decoding the request payload (not logged) or correlating with claude.ai
+  client traces. A wrapper in `register_tools` could log `name=` at INFO.
+- **Orphan DCR clients accumulate.** Each failed connector bring-up
+  registers a fresh DCR client; client_id rows accumulate in `oauth.db`
+  with no cleanup. Six rows after one bring-up session, not actively
+  harmful. A `DELETE FROM clients WHERE created_at < now - 30 days AND
+  client_id NOT IN (SELECT DISTINCT client_id FROM refresh_tokens WHERE
+  revoked_at IS NULL)` style sweep is the right shape.
