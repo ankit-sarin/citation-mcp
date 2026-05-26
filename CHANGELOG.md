@@ -4,9 +4,11 @@ All notable changes to citation-mcp are documented in this file.
 
 For release history prior to v0.3.3, see the project's unified planning
 documents. Source-pin versions (`pyproject.toml`, `__version__`) were not
-incremented for tag-only releases v0.3.1 (deployment-only) and v0.3.2
-(SDK host-check disable, commit `b9c50aa`); v0.3.3 brings the pin in sync
-with the tag history.
+incremented after v0.3.0: the v0.3.1 milestone was a deployment-only event
+(systemd unit installation; no source change, no git tag), and the v0.3.2
+tagged release (SDK host-check disable, commit `b9c50aa`) shipped without
+a corresponding source-pin bump. v0.3.3 brings the pin in sync with the
+tag history.
 
 ## v0.3.3 — Phase 1.D.5 (diagnostic logging)
 
