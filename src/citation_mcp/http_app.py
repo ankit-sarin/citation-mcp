@@ -30,6 +30,7 @@ from typing import AsyncIterator
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -196,6 +197,14 @@ def build_http_app(
         token_verifier=verifier,
         auth=auth_settings,
         lifespan=build_lifespan(),
+        # SDK auto-enables DNS rebinding protection with a localhost-only
+        # allowlist whenever its host arg defaults to 127.0.0.1, which 421s
+        # legitimate reverse-proxied traffic from Cloudflare Tunnel. Our
+        # outer HostHeaderMiddleware already validates Host against
+        # MCP_HOST_ALLOWLIST; disable the SDK's redundant copy.
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        ),
     )
     register_tools(mcp)
 
