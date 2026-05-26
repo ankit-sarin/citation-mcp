@@ -7,11 +7,14 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Ankit Sarin", email = "asarin@ucdavis.edu" }]
 dependencies = [
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.23.0",
     "httpx>=0.27",
     "rapidfuzz>=3.6",
     "aiosqlite>=0.20",
     "python-dateutil>=2.8",
+    "pyjwt>=2.10",
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
