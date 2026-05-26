@@ -52,6 +52,17 @@ export OPENALEX_API_KEY=...
 export SEMANTIC_SCHOLAR_API_KEY=...
 ```
 
+## Security / Logging
+
+httpx logs each outbound request URL at INFO. NCBI E-utilities and OpenAlex
+authenticate via `api_key=` query params, which would otherwise leak the
+key into log files and terminal scrollback. On package import, citation-mcp
+installs `QueryParamRedactionFilter` on the `httpx` logger; sensitive query
+values (`api_key`, `apikey`, `api-key`, `key`, `token`, `access_token`,
+`refresh_token`, `client_secret`) are rewritten to `***` before emission.
+Header-based auth (e.g. Semantic Scholar's `x-api-key`) is unaffected
+because httpx does not log request headers at INFO.
+
 ## Roadmap
 
 - **Phase 1.A** — stdio transport, `verifyCitation` tool, Crossref-only, SQLite cache *(shipped)*
