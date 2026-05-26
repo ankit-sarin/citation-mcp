@@ -4,9 +4,20 @@ A self-hosted Model Context Protocol server for citation verification, integrity
 and discovery — built to complement Anthropic's hosted PubMed connector and
 `web_fetch` by filling the gaps they cannot.
 
-**Status:** Phase 1.A — Crossref single-database verifier over stdio transport.
-Not yet production-ready. Cloudflare Tunnel exposure and the `claude.ai`
-custom-connector registration come in later phases.
+**Status:** Phase 1.B.1 — multi-database verification, bulk verify, and
+identifier resolution over stdio transport. Production deployment (HTTP
+transport, OAuth, Cloudflare Tunnel) is still pending — Phase 1.D.
+
+## Features
+
+- `verifyCitation` — fans out a single citation across Crossref, PubMed,
+  OpenAlex, and Semantic Scholar in parallel (arXiv is opt-in, queried only
+  when input has an explicit `arxiv_id`), merges the per-DB records into a
+  single canonical, and surfaces inter-database discrepancies
+- `bulkVerifyCitations` — verifies up to 200 citations per call, with
+  citation-level concurrency control
+- `resolveIdentifier` — cross-converts DOI ↔ PMID ↔ arXiv ID ↔ OpenAlex Work
+  ID ↔ Semantic Scholar paper ID
 
 ## Quick start
 
@@ -29,12 +40,24 @@ To run the stdio server directly (for an MCP client to launch):
 uv run citation-mcp
 ```
 
+## Configuration
+
+Set whichever database keys you have; missing keys cause that backend to
+degrade gracefully (warning logged at startup, skipped for live queries).
+
+```bash
+export CROSSREF_POLITE_EMAIL=you@example.org
+export NCBI_API_KEY=...
+export OPENALEX_API_KEY=...
+export SEMANTIC_SCHOLAR_API_KEY=...
+```
+
 ## Roadmap
 
-- **Phase 1.A** — stdio transport, `verifyCitation` tool, Crossref-only, SQLite cache
-- **Phase 1.B+** — PubMed, OpenAlex, Semantic Scholar, arXiv clients; `bulkVerifyCitations`, `resolveIdentifier`
-- **Phase 2** — HTTP transport + OAuth + Cloudflare Tunnel + Cloudflare Access (Google SSO)
-- **Phase 3+** — remaining citation-integrity tools per the phasing schedule
+- **Phase 1.A** — stdio transport, `verifyCitation` tool, Crossref-only, SQLite cache *(shipped)*
+- **Phase 1.B** — PubMed, OpenAlex, Semantic Scholar, arXiv clients; `bulkVerifyCitations`, `resolveIdentifier` *(shipped)*
+- **Phase 1.C** — additional citation-integrity tools
+- **Phase 1.D** — HTTP transport + OAuth + Cloudflare Tunnel + Cloudflare Access (Google SSO)
 
 ## License
 

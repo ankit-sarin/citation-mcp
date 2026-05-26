@@ -11,28 +11,69 @@ and arrive here as task specs.
 
 ## Architecture state
 
-**Phase 1.A — complete.**
+**Phase 1.B + 1.B.1 — complete.**
 
 - stdio MCP transport via the official `mcp` Python SDK
-- Single tool: `verifyCitation`
-- Single database backend: Crossref (polite pool)
-- SQLite cache (aiosqlite) with TTL, scaffolded for future result types
-- Match-quality scoring rubric:
+- Three tools:
+  - `verifyCitation` — fans out across all configured databases in parallel,
+    applies per-DB candidate fall-through, then runs Layer 3 canonical merge
+    with inter-DB discrepancy detection.
+  - `bulkVerifyCitations` — batch verification with citation-level
+    concurrency cap (10) and a 200-citation request cap.
+  - `resolveIdentifier` — cross-converts DOI ↔ PMID ↔ arXiv ID ↔ OpenAlex
+    Work ID ↔ Semantic Scholar paper ID, with 14-day caching.
+- Five database backends, each gracefully degrading when its API key is unset:
+  - **Crossref** — polite-pool, single-source canonical for DOI / title / authors / journal
+  - **PubMed** — NCBI E-utilities (esearch + efetch), 10 req/sec with key (3 without)
+  - **OpenAlex** — `api_key=` query param (no mailto; deprecated Feb 2026)
+  - **Semantic Scholar** — `x-api-key` header, 20 req/sec authenticated
+  - **arXiv** — Atom API, 3-second min-spacing lock
+- SQLite cache (aiosqlite) with differential TTL: 14 days for confirmed matches,
+  24 hours for no-match outcomes, 14 days for identifier-resolution results
+- Three-layer match-quality scoring:
   - Layer 1 — identifier-decisive (DOI / PMID / arXiv / OpenAlex / Semantic Scholar)
   - Layer 2 — weighted-field score (title 0.40, first-author 0.20, year 0.20,
-    journal 0.10, other-authors 0.10) with short-title weight adjustment and
-    three hard sanity guards (year-off, first-author-mismatch + low title sim,
-    title sim below floor)
+    journal 0.10, other-authors 0.10), adaptive weight redistribution over
+    supplied input fields, short-title weight adjustment, three sanity guards,
+    and a "title-only cap" that limits match_quality to "medium" when fewer
+    than three input fields are populated.
+  - Layer 3 — `merge_canonical_records()` with per-field authority order across
+    DBs, special-case earliest-year and dual-source citation counts.
 
 **Future phases (not yet built):**
 
-- **1.B+** — PubMed, OpenAlex, Semantic Scholar, arXiv clients;
-  `bulkVerifyCitations`, `resolveIdentifier`
-- **2** — HTTP/SSE transport + OAuth + DCR + Cloudflare Tunnel + Cloudflare
+- **1.C** — additional citation-integrity tools per the phasing schedule
+  maintained in `claude.ai`
+- **1.D** — HTTP/SSE transport + OAuth + DCR + Cloudflare Tunnel + Cloudflare
   Access (Google SSO) so the server can register as a `claude.ai` custom
   connector
-- **3+** — remaining citation-integrity tools per the phasing schedule
-  maintained in `claude.ai`
+
+## Database query policy
+
+- **arXiv is opt-in.** For `verifyCitation`, arXiv is queried only when the
+  input has an explicit `arxiv_id`. For DOI / PMID / title inputs, arXiv's
+  coverage of biomedical work is near-zero and the rate-limit cost (3-second
+  min spacing plus frequent 429s) is not worth the negligible hit rate.
+  Similarly, `resolveIdentifier` queries arXiv only when `from_type='arxiv'`;
+  for other `from_type` values, arXiv IDs are cross-referenced via Semantic
+  Scholar's `externalIds` field.
+- **arXiv 429s are soft warnings, not failures.** When arXiv exhausts its
+  retries on 429, the client raises `ArxivRateLimited` and the tool result
+  surfaces a `{"source": "arxiv", "level": "warning", "message": "arxiv
+  rate-limited; result may be incomplete"}` entry. arXiv does NOT appear in
+  `databases_failed` in this case — the other DBs typically cover the work
+  and partial-but-correct is a better representation than "DB failed".
+
+## Database configuration
+
+| Variable | Default | Purpose | If unset |
+|---|---|---|---|
+| `CROSSREF_POLITE_EMAIL` | `asarin@ucdavis.edu` | Polite-pool mailto for Crossref + NCBI User-Agent | Crossref runs at default rate |
+| `NCBI_API_KEY` | (none) | NCBI E-utilities key for PubMed | PubMed runs at 3 req/sec instead of 10 |
+| `OPENALEX_API_KEY` | (none) | OpenAlex API key | OpenAlex client disabled; warning logged |
+| `SEMANTIC_SCHOLAR_API_KEY` | (none) | Semantic Scholar Graph API key | Semantic Scholar runs at 1 req/sec |
+| `CACHE_DB_PATH` | `~/projects/citation-mcp/data/cache.db` | SQLite cache location | n/a |
+| `CITATION_MCP_LOG_LEVEL` | `INFO` | Python logging level | n/a |
 
 ## How to run locally
 
@@ -48,28 +89,48 @@ uv run citation-mcp                          # stdio server directly
 uv run pytest -v
 ```
 
-## Environment variables
+Live integration tests are gated behind `CITATION_MCP_LIVE=1`:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `CROSSREF_POLITE_EMAIL` | `asarin@ucdavis.edu` | Contact email injected into the Crossref `User-Agent` for polite-pool access |
-| `CACHE_DB_PATH` | `~/projects/citation-mcp/data/cache.db` | SQLite cache location (parent dir is created on first run) |
-| `CITATION_MCP_LOG_LEVEL` | `INFO` | Python logging level for the server |
+```bash
+CITATION_MCP_LIVE=1 uv run pytest -v -k integration
+```
+
+## Speed targets
+
+- `bulkVerifyCitations` cold cache, 30 typical citations: <15 seconds.
+- Same call, warm cache: <2 seconds.
 
 ## Architectural convention
 
 Do not add new tools, transports, or database backends without an updated task
 spec from the planning environment (`claude.ai`). This repo is implementer-side
 only; architecture decisions live elsewhere. Likewise, do not introduce auth,
-HTTP transport, or systemd/Cloudflare changes within this Phase 1.A scope.
+HTTP transport, or systemd/Cloudflare changes within this Phase 1.B scope —
+those land in Phase 1.D.
 
-## Phase 1.A known limitations
+## Phase 1.B refinements completed (vs. Phase 1.A)
 
-The following are deliberate scope cuts, slated for Phase 1.B unless otherwise noted:
+- **Title-only inputs are now capped at "medium" match quality** when fewer
+  than three populated fields among {title, first-author, year, journal} are
+  supplied. The cap surfaces as a `capped_at_medium_insufficient_input_fields`
+  warning on the result.
+- **Candidate fall-through.** When the top-scoring candidate from any DB fails
+  a sanity guard, the next-highest-scoring candidate is tried. This applies
+  uniformly across Crossref, PubMed, OpenAlex, Semantic Scholar, and arXiv
+  metadata-search paths.
+- **Differential cache TTL.** Confirmed matches cache for 14 days; no-match
+  outcomes cache for 24 hours so newly-indexed papers re-query promptly.
+- **`rejected_by` consolidated.** Now lives only in `score_breakdown.rejected_by`;
+  the top-level duplicate has been removed.
 
-- **Title-only input can reach high confidence.** Layer 2 renormalizes weights over supplied fields, so a citation with only a title and a single candidate match can score 1.0. In v1.1 this is capped at `match_quality: "medium"` for input with fewer than three populated fields among {title, first-author, year, journal}.
-- **No metadata-search candidate fall-through.** If the top-ranked Crossref candidate fails sanity guards, lower-ranked candidates are not retried. This will incorrectly reject the real paper when Crossref surfaces "Reply to" / "Erratum" entries with similar titles above it. Phase 1.B iterates the candidate list and picks the highest-scoring candidate that passes guards.
-- **`rejected_by` is currently surfaced both at the top level of the Layer 2 internal result and inside `score_breakdown`.** Phase 1.B consolidates to `score_breakdown.rejected_by` only.
-- **Uniform 14-day cache TTL.** No-match outcomes are cached for the same 14 days as confirmed matches. Phase 1.B introduces a 24-hour TTL for no-match outcomes so newly-indexed papers are re-queried promptly.
-- **Single-string author input + non-Western name order.** `parse_author_string` assumes the last whitespace-separated token is the surname. `"Şahin Uğur"` parses incorrectly. Crossref's structured family/given fields are used preferentially when available, which mitigates this for verification flows but not for input parsing. v1.1 hardening item.
-- **Single-database discrepancy reporting.** The `discrepancies` array is intentionally empty in Phase 1.A; it is reserved for inter-database conflict reporting once Phase 1.B adds PubMed/OpenAlex/Semantic Scholar/arXiv. Input-vs-canonical mismatches within Crossref data are not surfaced as discrepancies (they would mostly be user typos, not source disagreement).
+## Phase 1.B known limitations
+
+- **Single-string author input + non-Western name order.** `parse_author_string`
+  still assumes the last whitespace-separated token is the surname. Structured
+  family/given fields are used preferentially when available.
+- **OpenAlex search filter** uses publication-year ± 1 as the only filter; the
+  `host_venue.display_name` field has been deprecated by OpenAlex in favor of
+  `primary_location.source.display_name`. The client reads both for safety.
+- **arXiv Atom XML edge cases.** Certain malformed `<entry>` elements (e.g.
+  partial submissions) may parse with empty fields. The client filters out
+  obviously broken entries but does not log them.

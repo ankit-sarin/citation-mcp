@@ -1,8 +1,9 @@
-"""Match-quality scoring for citation verification.
+"""Match-quality scoring + canonical record merging.
 
-Two layers:
+Layers:
   Layer 1 — identifier-decisive (DOI, PMID, arXiv, OpenAlex, Semantic Scholar).
   Layer 2 — weighted-field bibliographic score with sanity guards.
+  Layer 3 — merge_canonical_records: reconcile per-field across DBs.
 """
 
 from __future__ import annotations
@@ -100,12 +101,10 @@ def parse_author_string(name: str) -> tuple[str, str]:
     if not s:
         return ("", "")
     if "," in s:
-        # "Last, First M" or "Last, F. M."
         parts = s.split(",", 1)
         surname = parts[0].strip()
         given = parts[1].strip() if len(parts) > 1 else ""
     else:
-        # "First M Last" — surname is last whitespace-delimited token
         tokens = s.split()
         if len(tokens) == 1:
             surname = tokens[0]
@@ -126,7 +125,6 @@ def normalize_author_surname(name: str) -> str:
         return ""
     surname, _ = parse_author_string(name)
     s = _nfkd_fold(surname).lower()
-    # Replace non-word characters with a single space, then collapse + strip apostrophes within tokens.
     s = re.sub(r"[\-\–\—_/]", " ", s)
     s = re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
     s = re.sub(r"\s+", " ", s).strip()
@@ -134,12 +132,13 @@ def normalize_author_surname(name: str) -> str:
 
 
 def normalize_journal(name: str) -> str:
-    """Lowercase, NFKD-fold, strip punctuation, collapse whitespace."""
+    """Lowercase, NFKD-fold, strip punctuation, collapse whitespace, drop leading article."""
     if name is None:
         return ""
     s = _nfkd_fold(name).lower()
     s = re.sub(r"[^\w\s&]", " ", s, flags=re.UNICODE)
     s = re.sub(r"\s+", " ", s).strip()
+    s = _LEADING_ARTICLES.sub("", s)
     return s
 
 
@@ -151,7 +150,6 @@ def journals_match(input_journal: str, candidate_journal: str) -> bool:
         return False
     if a == b:
         return True
-    # Try abbrev <-> full in either direction.
     if _JOURNAL_ABBREV_TO_FULL.get(a) == b:
         return True
     if _JOURNAL_ABBREV_TO_FULL.get(b) == a:
@@ -231,14 +229,6 @@ _DEFAULT_WEIGHTS = {
     "other_authors": 0.10,
 }
 
-_SHORT_TITLE_WEIGHTS = {
-    "title": 0.20,
-    "first_author": 0.25,
-    "year": 0.25,
-    "journal": 0.15,
-    "other_authors": 0.15,
-}
-
 
 def _title_similarity(input_title: str, candidate_title: str) -> float:
     a = normalize_title(input_title)
@@ -299,6 +289,21 @@ def _author_to_string(a: Any) -> str:
     return ""
 
 
+def _count_populated_input_fields(input_citation: dict) -> int:
+    """Phase 1.B refinement 6.1: count populated fields among {title, first_author, year, journal}."""
+    n = 0
+    if input_citation.get("title"):
+        n += 1
+    authors = input_citation.get("authors") or []
+    if authors:
+        n += 1
+    if input_citation.get("year") is not None:
+        n += 1
+    if input_citation.get("journal"):
+        n += 1
+    return n
+
+
 def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     """Layer 2: weighted-field score with sanity guards."""
     input_title = input_citation.get("title") or ""
@@ -317,8 +322,6 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     input_journal = input_citation.get("journal")
     journal_match = 1.0 if journals_match(input_journal, candidate.get("journal")) else 0.0
 
-    # --- Build the weight set. ---
-    # Step 1: identify which fields are applicable based on what the input supplied.
     applicable = {
         "title": bool(input_title),
         "first_author": bool(input_authors),
@@ -327,8 +330,6 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
         "other_authors": isinstance(input_authors, list) and len(input_authors) >= 2,
     }
 
-    # Step 2: start from default weights, zero out inapplicable fields,
-    # then renormalize across applicable fields so they sum to 1.0.
     weights = dict(_DEFAULT_WEIGHTS)
     for k, ok in applicable.items():
         if not ok:
@@ -337,9 +338,9 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     if applicable_sum > 0:
         weights = {k: v / applicable_sum for k, v in weights.items()}
 
-    # Step 3: short-title adjustment — applied AFTER input-driven redistribution
-    # so the spec's "title weight = 0.20 when short" invariant holds.
-    # Freed weight is redistributed equally across other *applicable* fields.
+    # Short-title adjustment — applied AFTER input-driven redistribution so the
+    # "title weight = 0.20 when short" invariant holds. Freed weight is
+    # redistributed equally across other applicable fields.
     normalized_input_title = normalize_title(input_title)
     token_count = len(normalized_input_title.split()) if normalized_input_title else 0
     if token_count > 0 and token_count < 5 and applicable["title"]:
@@ -359,8 +360,7 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
         + weights["other_authors"] * other_authors_match
     )
 
-    # --- Hard sanity guards (applied AFTER computing weighted_score for breakdown,
-    #     but they override final confidence/match_quality). Apply in order; first hit wins. ---
+    # --- Hard sanity guards. Apply in order; first hit wins. ---
     rejected_by: str | None = None
     if input_year is not None and cand_year is not None and abs(int(input_year) - int(cand_year)) > 1:
         rejected_by = "year_off_by_more_than_one"
@@ -386,15 +386,14 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     }
 
     if rejected_by:
+        # Phase 1.B refinement 6.2: rejected_by lives ONLY in score_breakdown.
         return {
             "confidence": 0.0,
             "match_quality": "none",
             "score_breakdown": score_breakdown,
             "requires_review": False,
-            "rejected_by": rejected_by,
         }
 
-    # Confidence thresholds
     if weighted_score >= 0.90 and title_sim >= 0.95:
         match_quality = "high"
         requires_review = False
@@ -408,12 +407,20 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
         match_quality = "none"
         requires_review = False
 
+    # Phase 1.B refinement 6.1: cap at "medium" if <3 populated input fields.
+    populated = _count_populated_input_fields(input_citation)
+    capped = False
+    if populated < 3 and match_quality == "high":
+        match_quality = "medium"
+        capped = True
+        score_breakdown["capped_at_medium_insufficient_input_fields"] = True
+
     return {
         "confidence": round(weighted_score, 4),
         "match_quality": match_quality,
         "score_breakdown": score_breakdown,
         "requires_review": requires_review,
-        "rejected_by": None,
+        "capped_at_medium_insufficient_input_fields": capped,
     }
 
 
@@ -429,6 +436,234 @@ def score_match(input_citation: dict, candidate: dict) -> dict:
                 "matched_identifier": layer1["matched_identifier"],
             },
             "requires_review": False,
-            "rejected_by": None,
+            "capped_at_medium_insufficient_input_fields": False,
         }
     return score_bibliographic_match(input_citation, candidate)
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 — canonical record merging across multi-DB matches
+# ---------------------------------------------------------------------------
+
+
+_AUTHORITY: dict[str, list[str]] = {
+    "doi": ["crossref", "openalex", "semantic_scholar", "pubmed", "arxiv"],
+    "pmid": ["pubmed", "crossref", "openalex", "semantic_scholar"],
+    "arxiv_id": ["arxiv", "semantic_scholar"],
+    "openalex_id": ["openalex"],
+    "paper_id": ["semantic_scholar"],
+    "title": ["crossref", "pubmed", "openalex", "semantic_scholar", "arxiv"],
+    "authors": ["crossref", "openalex", "pubmed", "semantic_scholar", "arxiv"],
+    "journal": ["crossref", "openalex", "pubmed", "semantic_scholar"],
+    "journal_iso_abbrev": ["pubmed"],
+    "volume": ["crossref", "pubmed", "openalex"],
+    "issue": ["crossref", "pubmed", "openalex"],
+    "pages": ["crossref", "pubmed", "openalex"],
+    "abstract": ["pubmed", "semantic_scholar", "openalex"],
+    "type": ["crossref", "openalex", "pubmed"],
+}
+
+
+def _by_source(records: list[dict]) -> dict[str, dict]:
+    """Group input records by their `source` field. Last write wins on duplicates."""
+    out: dict[str, dict] = {}
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        src = r.get("source")
+        if not src:
+            continue
+        out[src] = r
+    return out
+
+
+_PAGES_FIRST_INT_RE = re.compile(r"\d+")
+
+
+def _pages_first_int(pages: str | None) -> int | None:
+    if not pages:
+        return None
+    m = _PAGES_FIRST_INT_RE.search(str(pages))
+    if not m:
+        return None
+    try:
+        return int(m.group(0))
+    except ValueError:
+        return None
+
+
+def _norm_string_for_compare(s: Any) -> str:
+    if s is None:
+        return ""
+    s = _nfkd_fold(str(s)).lower()
+    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _authors_to_surname_list(authors: list | None) -> list[str]:
+    if not authors:
+        return []
+    out: list[str] = []
+    for a in authors:
+        sn = normalize_author_surname(_author_to_string(a))
+        if sn:
+            out.append(sn)
+    return out
+
+
+def _values_disagree(field: str, canonical: Any, other: Any) -> bool:
+    """Field-specific equality test. True if `other` disagrees with `canonical`."""
+    if canonical is None or other is None:
+        return False
+    if field in {"doi", "pmid", "arxiv_id", "openalex_id", "paper_id"}:
+        a = _normalize_simple_id(str(canonical))
+        b = _normalize_simple_id(str(other))
+        if field == "doi":
+            a = normalize_doi(str(canonical))
+            b = normalize_doi(str(other))
+        elif field == "pmid":
+            a = _normalize_pmid(canonical)
+            b = _normalize_pmid(other)
+        elif field == "arxiv_id":
+            a = _normalize_arxiv(str(canonical))
+            b = _normalize_arxiv(str(other))
+        return a != b
+    if field == "title":
+        return _norm_string_for_compare(canonical) != _norm_string_for_compare(other)
+    if field == "journal":
+        return not journals_match(str(canonical), str(other))
+    if field == "journal_iso_abbrev":
+        return _norm_string_for_compare(canonical) != _norm_string_for_compare(other)
+    if field == "authors":
+        return _authors_to_surname_list(canonical) != _authors_to_surname_list(other)
+    if field == "type":
+        return _norm_string_for_compare(canonical) != _norm_string_for_compare(other)
+    if field in {"volume", "issue"}:
+        return _norm_string_for_compare(canonical) != _norm_string_for_compare(other)
+    if field == "pages":
+        a = _pages_first_int(canonical)
+        b = _pages_first_int(other)
+        if a is None or b is None:
+            return False
+        return a != b
+    if field == "abstract":
+        return _norm_string_for_compare(canonical) != _norm_string_for_compare(other)
+    return canonical != other
+
+
+def _resolve_by_authority(
+    field: str,
+    by_source: dict[str, dict],
+    authority: list[str],
+) -> tuple[Any, str | None, list[tuple[str, Any]]]:
+    """Walk authority order; return (canonical_value, canonical_source, others_nonnull).
+
+    `others_nonnull` are (source, value) tuples for lower-authority DBs that
+    supplied a non-null value — used to detect disagreements.
+    """
+    canonical: Any = None
+    canonical_source: str | None = None
+    others: list[tuple[str, Any]] = []
+    for src in authority:
+        rec = by_source.get(src)
+        if not rec:
+            continue
+        val = rec.get(field)
+        if val is None or (isinstance(val, (list, str)) and len(val) == 0):
+            continue
+        if canonical is None:
+            canonical = val
+            canonical_source = src
+        else:
+            others.append((src, val))
+    return canonical, canonical_source, others
+
+
+def _earliest_year(by_source: dict[str, dict]) -> tuple[int | None, dict[str, int]]:
+    """Return (earliest_year, per_db_years)."""
+    ys: dict[str, int] = {}
+    for src, rec in by_source.items():
+        y = rec.get("year")
+        if isinstance(y, int):
+            ys[src] = y
+    if not ys:
+        return None, {}
+    return min(ys.values()), ys
+
+
+def _citation_counts(by_source: dict[str, dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for src in ("openalex", "semantic_scholar"):
+        rec = by_source.get(src)
+        if rec and isinstance(rec.get("citation_count"), int):
+            out[src] = rec["citation_count"]
+    return out
+
+
+def merge_canonical_records(records: list[dict]) -> dict:
+    """Layer 3: merge per-DB normalized records into a canonical + discrepancy list.
+
+    Returns {"canonical": dict, "discrepancies": list[dict]}.
+    """
+    by_source = _by_source(records)
+    canonical: dict[str, Any] = {}
+    discrepancies: list[dict] = []
+
+    for field, authority in _AUTHORITY.items():
+        value, source, others = _resolve_by_authority(field, by_source, authority)
+        canonical[field] = value
+        if value is not None:
+            disagreeing: dict[str, Any] = {}
+            for src, other_val in others:
+                if _values_disagree(field, value, other_val):
+                    disagreeing[src] = other_val
+            if disagreeing:
+                values_map: dict[str, Any] = {source: value} if source else {}
+                values_map.update(disagreeing)
+                discrepancies.append({
+                    "field": field,
+                    "values": values_map,
+                    "resolved_to": value,
+                    "rule": "highest_authority_db",
+                })
+
+    # Year: earliest non-null across all DBs.
+    earliest, per_db_years = _earliest_year(by_source)
+    canonical["year"] = earliest
+    if earliest is not None and per_db_years:
+        disagreeing = {
+            src: y for src, y in per_db_years.items()
+            if abs(y - earliest) > 1
+        }
+        if disagreeing:
+            values_map = dict(per_db_years)
+            discrepancies.append({
+                "field": "year",
+                "values": values_map,
+                "resolved_to": earliest,
+                "rule": "earliest_non_null_year",
+            })
+
+    # Citation count: report both, flag if >20% relative difference.
+    counts = _citation_counts(by_source)
+    if counts:
+        canonical["citation_count"] = counts
+        oa = counts.get("openalex")
+        ss = counts.get("semantic_scholar")
+        if oa is not None and ss is not None and max(oa, ss) > 0:
+            denom = max(oa, ss)
+            if abs(oa - ss) / denom > 0.20:
+                discrepancies.append({
+                    "field": "citation_count",
+                    "values": counts,
+                    "resolved_to": counts,
+                    "rule": "report_both_diff_gt_20pct",
+                })
+    else:
+        canonical["citation_count"] = None
+
+    # Sources list, for traceability.
+    canonical["sources"] = sorted(by_source.keys())
+
+    return {"canonical": canonical, "discrepancies": discrepancies}

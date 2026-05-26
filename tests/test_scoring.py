@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from citation_mcp.scoring import (
     check_identifier_match,
     journals_match,
@@ -91,7 +89,7 @@ def test_identifier_match_no_identifiers_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 sanity guards
+# Layer 2 sanity guards (rejected_by lives in score_breakdown only — Phase 1.B)
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +99,8 @@ def test_year_off_by_more_than_one_rejects():
     r = score_bibliographic_match(inp, cand)
     assert r["confidence"] == 0.0
     assert r["match_quality"] == "none"
-    assert r["rejected_by"] == "year_off_by_more_than_one"
+    assert r["score_breakdown"]["rejected_by"] == "year_off_by_more_than_one"
+    assert "rejected_by" not in r  # top-level removed
 
 
 def test_first_author_mismatch_low_title_sim_rejects():
@@ -116,7 +115,10 @@ def test_first_author_mismatch_low_title_sim_rejects():
         "year": 2020,
     }
     r = score_bibliographic_match(inp, cand)
-    assert r["rejected_by"] in ("first_author_mismatch_low_title_sim", "title_similarity_below_floor")
+    assert r["score_breakdown"]["rejected_by"] in (
+        "first_author_mismatch_low_title_sim",
+        "title_similarity_below_floor",
+    )
 
 
 def test_title_similarity_below_floor_rejects():
@@ -131,8 +133,7 @@ def test_title_similarity_below_floor_rejects():
         "year": 2020,
     }
     r = score_bibliographic_match(inp, cand)
-    # Title sim should be far below 0.70; first_author matches so guard 2 doesn't fire.
-    assert r["rejected_by"] == "title_similarity_below_floor"
+    assert r["score_breakdown"]["rejected_by"] == "title_similarity_below_floor"
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +142,6 @@ def test_title_similarity_below_floor_rejects():
 
 
 def test_short_title_adjustment_redistributes_weights():
-    # Normalized title "covid 19 vaccine" — 3 tokens, below threshold of 5.
     inp = {
         "title": "COVID-19 Vaccine",
         "authors": ["Polack, Fernando P."],
@@ -157,13 +157,11 @@ def test_short_title_adjustment_redistributes_weights():
     r = score_bibliographic_match(inp, cand)
     weights = r["score_breakdown"]["weights_applied"]
     assert weights["title"] == 0.20
-    # The remaining four fields should sum to 0.80.
     rest = sum(v for k, v in weights.items() if k != "title")
     assert abs(rest - 0.80) < 1e-9
 
 
 def test_long_title_all_fields_uses_default_weights():
-    """When input supplies all five fields, the default weight set is used unchanged."""
     inp = {
         "title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine in Adults",
         "authors": ["Polack, Fernando P.", "Thomas, Stephen J."],
@@ -211,7 +209,8 @@ def test_high_quality_match():
     assert r["confidence"] >= 0.90
     assert r["score_breakdown"]["title_sim"] >= 0.95
     assert r["requires_review"] is False
-    assert r["rejected_by"] is None
+    assert r["score_breakdown"]["rejected_by"] is None
+    assert "rejected_by" not in r
 
 
 def test_score_match_short_circuits_on_identifier():
@@ -224,7 +223,6 @@ def test_score_match_short_circuits_on_identifier():
 
 
 def test_low_match_requires_review():
-    # Tweak so weighted_score lands in [0.60, 0.75) — title mostly matches but year off by 1 + no journal.
     inp = {
         "title": "Some interesting study about cardiovascular outcomes",
         "authors": ["Smith, John A"],
@@ -236,7 +234,57 @@ def test_low_match_requires_review():
         "year": 2020,
     }
     r = score_bibliographic_match(inp, cand)
-    # Verify we land somewhere sensible — exact bucket depends on token_sort_ratio score.
     assert r["match_quality"] in ("low", "medium", "high")
     if r["match_quality"] == "low":
         assert r["requires_review"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.B refinement 6.1 — title-only cap
+# ---------------------------------------------------------------------------
+
+
+def test_title_only_input_caps_at_medium():
+    """Input with only 'title' populated must cap match_quality at 'medium'."""
+    inp = {"title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine"}
+    cand = {
+        "title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine",
+        "authors": [{"family": "Polack", "given": "Fernando P."}],
+        "year": 2020,
+        "journal": "New England Journal of Medicine",
+    }
+    r = score_bibliographic_match(inp, cand)
+    assert r["match_quality"] == "medium"
+    assert r["capped_at_medium_insufficient_input_fields"] is True
+    assert r["score_breakdown"]["capped_at_medium_insufficient_input_fields"] is True
+
+
+def test_two_field_input_still_caps_at_medium():
+    """Title + year only = 2 fields, still under threshold of 3."""
+    inp = {"title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine", "year": 2020}
+    cand = {
+        "title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine",
+        "authors": [{"family": "Polack", "given": "Fernando P."}],
+        "year": 2020,
+        "journal": "New England Journal of Medicine",
+    }
+    r = score_bibliographic_match(inp, cand)
+    assert r["match_quality"] == "medium"
+
+
+def test_three_field_input_can_reach_high():
+    """Title + first_author + year = 3 fields ≥ threshold, so cap doesn't apply."""
+    inp = {
+        "title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine",
+        "authors": ["Polack, Fernando P."],
+        "year": 2020,
+    }
+    cand = {
+        "title": "Safety and Efficacy of the BNT162b2 mRNA Covid 19 Vaccine",
+        "authors": [{"family": "Polack", "given": "Fernando P."}],
+        "year": 2020,
+        "journal": "New England Journal of Medicine",
+    }
+    r = score_bibliographic_match(inp, cand)
+    assert r["match_quality"] == "high"
+    assert r["capped_at_medium_insufficient_input_fields"] is False

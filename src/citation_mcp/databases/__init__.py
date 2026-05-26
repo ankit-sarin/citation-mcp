@@ -1,1 +1,1 @@
-"""Database backend clients (Crossref in Phase 1.A)."""
+"""Database backend clients: Crossref, PubMed, OpenAlex, Semantic Scholar, arXiv."""
