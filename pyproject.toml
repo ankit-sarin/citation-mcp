@@ -1,6 +1,6 @@
 [project]
 name = "citation-mcp"
-version = "0.3.0"
+version = "0.3.3"
 description = "Self-hosted Model Context Protocol server for citation verification, integrity, and discovery."
 readme = "README.md"
 requires-python = ">=3.11"

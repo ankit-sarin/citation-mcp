@@ -96,6 +96,7 @@ def build_lifespan() -> Callable[[FastMCP], AsyncIterator[AppContext]]:
     return _app_lifespan
 
 
+# TODO(v1.1): consolidate per-tool entry logging via a wrapper adapter when tool count grows past 5–6.
 def register_tools(target: FastMCP) -> None:
     """Register the three Phase 1.B tools on the given FastMCP instance.
 
@@ -677,6 +678,7 @@ async def verify_citation_tool(
     issue: str | None = None,
     pages: str | None = None,
 ) -> str:
+    logger.info("tool_call name=%s", "verifyCitation")
     input_citation = {
         "doi": doi,
         "pmid": pmid,
@@ -708,6 +710,7 @@ async def bulk_verify_citations_tool(
     ctx: Context,
     citations: list[dict],
 ) -> str:
+    logger.info("tool_call name=%s", "bulkVerifyCitations")
     app_ctx: AppContext = ctx.request_context.lifespan_context
     result = await bulk_verify_citations(
         citations,
@@ -727,6 +730,7 @@ async def resolve_identifier_tool(
     from_type: str,
     to_types: list[str] | None = None,
 ) -> str:
+    logger.info("tool_call name=%s", "resolveIdentifier")
     app_ctx: AppContext = ctx.request_context.lifespan_context
     result = await resolve_identifier(
         identifier=identifier,

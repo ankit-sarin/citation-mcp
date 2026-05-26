@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import jwt
 
 from citation_mcp.auth import tokens as tk
@@ -74,6 +76,27 @@ async def test_rejects_wrong_audience() -> None:
         algorithm="HS256",
     )
     assert await _verifier().verify_token(tok) is None
+
+
+async def test_warning_log_on_bad_audience_does_not_leak_token(caplog) -> None:
+    bad_token = jwt.encode(
+        {
+            "iss": ISSUER,
+            "sub": "u",
+            "aud": "https://wrong.example.com/",
+            "iat": 1,
+            "exp": 9999999999,
+            "client_id": "c",
+            "scope": "",
+        },
+        KEY,
+        algorithm="HS256",
+    )
+    caplog.set_level(logging.WARNING, logger="citation_mcp.auth.verifier")
+    result = await _verifier().verify_token(bad_token)
+    assert result is None
+    assert "InvalidAudienceError" in caplog.text
+    assert bad_token not in caplog.text
 
 
 async def test_rejects_tampered_signature() -> None:

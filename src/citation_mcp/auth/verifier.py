@@ -34,7 +34,12 @@ class CitationMcpTokenVerifier(TokenVerifier):
                 audience=self._audience,
             )
         except jwt.InvalidTokenError as e:
-            logger.debug("token verification failed: %s", type(e).__name__)
+            msg = str(e)
+            logger.warning(
+                "token verification failed: %s: %s",
+                type(e).__name__,
+                msg[:200] + ("…" if len(msg) > 200 else ""),
+            )
             return None
         return AccessToken(
             token=token,
