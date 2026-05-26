@@ -91,6 +91,44 @@ async def _app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         await cache.close()
 
 
+def build_lifespan() -> Callable[[FastMCP], AsyncIterator[AppContext]]:
+    """Return the shared lifespan factory so HTTP and stdio use one definition."""
+    return _app_lifespan
+
+
+def register_tools(target: FastMCP) -> None:
+    """Register the three Phase 1.B tools on the given FastMCP instance.
+
+    Called for the module-global stdio mcp below; called again from the HTTP
+    transport on its own FastMCP wired with token_verifier + auth.
+    """
+    target.tool(
+        name="verifyCitation",
+        description=(
+            "Verify a citation against five databases (Crossref, PubMed, OpenAlex, "
+            "Semantic Scholar, arXiv) in parallel. Provide at least one of doi, pmid, "
+            "or title. Returns match quality, canonical record, inter-DB discrepancies, "
+            "and per-DB confirmation status."
+        ),
+    )(verify_citation_tool)
+    target.tool(
+        name="bulkVerifyCitations",
+        description=(
+            "Verify up to 200 citations in parallel against all configured databases. "
+            "Returns a list of per-citation results in input order plus a summary "
+            "(counts by match quality, cache hits, elapsed seconds)."
+        ),
+    )(bulk_verify_citations_tool)
+    target.tool(
+        name="resolveIdentifier",
+        description=(
+            "Cross-convert paper identifiers across DOI, PMID, arXiv ID, OpenAlex Work ID, "
+            "and Semantic Scholar paper ID. Specify the source identifier and its type; "
+            "returns the corresponding identifiers in each requested target system."
+        ),
+    )(resolve_identifier_tool)
+
+
 mcp = FastMCP("citation-mcp", lifespan=_app_lifespan)
 
 
@@ -626,15 +664,6 @@ async def resolve_identifier(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
-    name="verifyCitation",
-    description=(
-        "Verify a citation against five databases (Crossref, PubMed, OpenAlex, "
-        "Semantic Scholar, arXiv) in parallel. Provide at least one of doi, pmid, "
-        "or title. Returns match quality, canonical record, inter-DB discrepancies, "
-        "and per-DB confirmation status."
-    ),
-)
 async def verify_citation_tool(
     ctx: Context,
     doi: str | None = None,
@@ -675,14 +704,6 @@ async def verify_citation_tool(
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool(
-    name="bulkVerifyCitations",
-    description=(
-        "Verify up to 200 citations in parallel against all configured databases. "
-        "Returns a list of per-citation results in input order plus a summary "
-        "(counts by match quality, cache hits, elapsed seconds)."
-    ),
-)
 async def bulk_verify_citations_tool(
     ctx: Context,
     citations: list[dict],
@@ -700,14 +721,6 @@ async def bulk_verify_citations_tool(
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
-@mcp.tool(
-    name="resolveIdentifier",
-    description=(
-        "Cross-convert paper identifiers across DOI, PMID, arXiv ID, OpenAlex Work ID, "
-        "and Semantic Scholar paper ID. Specify the source identifier and its type; "
-        "returns the corresponding identifiers in each requested target system."
-    ),
-)
 async def resolve_identifier_tool(
     ctx: Context,
     identifier: str,
@@ -727,6 +740,11 @@ async def resolve_identifier_tool(
         arxiv=app_ctx.arxiv,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
+
+
+# Register the three tools on the stdio mcp instance. HTTP transport
+# builds its own FastMCP and calls register_tools(target) on that.
+register_tools(mcp)
 
 
 # ---------------------------------------------------------------------------

@@ -81,8 +81,9 @@ async def test_rejects_tampered_signature() -> None:
         sub="u", client_id="c", scope="",
         signing_key=KEY, issuer=ISSUER, audience=AUDIENCE,
     )
-    # Flip the last character of the signature segment.
+    # Replace the signature segment with one signed by a different key.
+    bad_sig = jwt.encode({"x": 1}, "y" * 64, algorithm="HS256").split(".")[-1]
     parts = tok.split(".")
-    parts[-1] = parts[-1][:-1] + ("A" if parts[-1][-1] != "A" else "B")
+    parts[-1] = bad_sig
     tampered = ".".join(parts)
     assert await _verifier().verify_token(tampered) is None
