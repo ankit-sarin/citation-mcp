@@ -11,9 +11,10 @@ and arrive here as task specs.
 
 ## Architecture state
 
-**Phase 1.B + 1.B.1 — complete.**
+**Phase 1.B + 1.B.1 + 1.D.0 + 1.D + 1.D.1 — complete.**
 
-- stdio MCP transport via the official `mcp` Python SDK
+- Dual transport: **stdio** (default) and **Streamable HTTP** (`--transport http`),
+  both backed by the official `mcp` Python SDK
 - Three tools:
   - `verifyCitation` — fans out across all configured databases in parallel,
     applies per-DB candidate fall-through, then runs Layer 3 canonical merge
@@ -42,13 +43,27 @@ and arrive here as task specs.
   - Layer 3 — `merge_canonical_records()` with per-field authority order across
     DBs, special-case earliest-year and dual-source citation counts.
 
+**Production deployment (Phase 1.D.1).**
+
+- systemd unit at `/etc/systemd/system/citation-mcp.service`, env in drop-in
+  `.service.d/override.conf` (640 root:root) — secrets never inline in the
+  main unit. Process runs as `ankitsarin`, bound to `127.0.0.1:8080`.
+- Fronted by Cloudflare Tunnel + Cloudflare Access at
+  `https://citation-mcp.digitalsurgeon.dev`. Access OTP gates
+  `/oauth/authorize` only; all other paths bypass.
+- Hardening: `NoNewPrivileges`, `ProtectSystem=strict`,
+  `ReadWritePaths=data logs`, `ProtectHome=read-only`, `PrivateTmp=true`.
+- Restart policy: `on-failure`, `RestartSec=5s` — deliberately fail-fast
+  on config errors (e.g. malformed `OAUTH_SIGNING_KEY`) so misconfiguration
+  surfaces in `systemctl status` rather than masquerading as a running
+  service.
+
 **Future phases (not yet built):**
 
 - **1.C** — additional citation-integrity tools per the phasing schedule
   maintained in `claude.ai`
-- **1.D** — HTTP/SSE transport + OAuth + DCR + Cloudflare Tunnel + Cloudflare
-  Access (Google SSO) so the server can register as a `claude.ai` custom
-  connector
+- **1.D.4** — register the server with `claude.ai` as a custom connector
+  and verify the end-to-end OAuth flow from a connected conversation
 
 ## Database query policy
 
@@ -76,14 +91,26 @@ and arrive here as task specs.
 | `SEMANTIC_SCHOLAR_API_KEY` | (none) | Semantic Scholar Graph API key | Semantic Scholar runs at 1 req/sec |
 | `CACHE_DB_PATH` | `~/projects/citation-mcp/data/cache.db` | SQLite cache location | n/a |
 | `CITATION_MCP_LOG_LEVEL` | `INFO` | Python logging level | n/a |
+| `OAUTH_SIGNING_KEY` | (none) | HS256 signing key (hex, ≥32 bytes) — **required** in HTTP mode | HTTP server refuses to start |
+| `OAUTH_ISSUER` | `https://citation-mcp.digitalsurgeon.dev` | OAuth 2.1 issuer URL surfaced in AS metadata | falls back to issuer default |
+| `OAUTH_AUDIENCE` | same as issuer | JWT `aud` claim | n/a |
+| `OAUTH_DB_PATH` | `~/projects/citation-mcp/data/oauth.db` | aiosqlite store for clients, codes, refresh tokens | n/a |
+| `OAUTH_ALLOW_MISSING_CF_EMAIL` | `false` | Dev escape hatch — bypass `Cf-Access-Authenticated-User-Email` requirement | n/a |
+| `MCP_ORIGIN_ALLOWLIST` | `https://claude.ai` | CSV of allowed Origins for `POST /mcp` (CVE-2026-33252) | n/a |
+| `MCP_HOST_ALLOWLIST` | `citation-mcp.digitalsurgeon.dev,localhost,127.0.0.1` | CSV of allowed Host headers (CVE-2026-35568) | n/a |
 
 ## How to run locally
 
 ```bash
 uv sync
-uv run mcp dev src/citation_mcp/server.py   # mcp-inspector in the browser
-uv run citation-mcp                          # stdio server directly
+uv run mcp dev src/citation_mcp/server.py        # mcp-inspector (stdio)
+uv run citation-mcp                              # stdio server
+OAUTH_SIGNING_KEY=$(openssl rand -hex 32) \
+  uv run citation-mcp --transport http --port 8090   # HTTP server (local dev)
 ```
+
+For the deployed service, use `systemctl {status,restart,stop} citation-mcp`
+on the DGX; logs via `journalctl -u citation-mcp -f`.
 
 ## How to run tests
 
@@ -106,9 +133,9 @@ CITATION_MCP_LIVE=1 uv run pytest -v -k integration
 
 Do not add new tools, transports, or database backends without an updated task
 spec from the planning environment (`claude.ai`). This repo is implementer-side
-only; architecture decisions live elsewhere. Likewise, do not introduce auth,
-HTTP transport, or systemd/Cloudflare changes within Phase 1.B / 1.B.1 scope —
-those land in Phase 1.D.
+only; architecture decisions live elsewhere. The systemd unit and Cloudflare
+Tunnel/Access config are similarly out-of-band — edit those only against an
+explicit deployment spec, not as part of a code change.
 
 ## Phase 1.B refinements completed (vs. Phase 1.A)
 
@@ -141,6 +168,42 @@ those land in Phase 1.D.
 - **`citation_count` shape verified consistent** (always dict-or-null
   across all paths; never a bare int).
 
+## Phase 1.D / 1.D.0 / 1.D.1 refinements (vs. 1.B.1)
+
+- **Streamable HTTP transport** alongside stdio. Outer Starlette app holds
+  our OAuth routes + CVE middlewares; SDK's `streamable_http_app()` is
+  mounted at `/` so our routes match first. Outer lifespan chains into
+  `sdk_app.router.lifespan_context` so the SDK's session manager actually
+  runs (Starlette doesn't propagate lifespan into mounts).
+- **Hand-rolled OAuth 2.1 AS** (`/oauth/register`, `/oauth/authorize`,
+  `/oauth/token`) per RFC 6749 / 7591 / 7636. Public clients only
+  (`token_endpoint_auth_method=none`). Returns `401 invalid_client` (not
+  the SDK's `400 unauthorized_client`) for unknown clients per RFC 6749
+  §5.2. DCR is open by design — Cloudflare Access at `/oauth/authorize`
+  is the gate, not registration.
+- **Identity bridge** via `Cf-Access-Authenticated-User-Email` header.
+  The accompanying `Cf-Access-Jwt-Assertion` is *not* verified against
+  Cloudflare's JWKS — this is intentional (the Tunnel is the trust
+  boundary). Set `OAUTH_ALLOW_MISSING_CF_EMAIL=true` only for local dev.
+- **CVE defenses** in three middlewares (outer→inner): `HostHeader`
+  (CVE-2026-35568, 421 on bad Host), `McpOrigin` (CVE-2026-33252, 403 on
+  cross-site `POST /mcp`), `McpContentType` (CVE-2026-33252, 415 on
+  non-JSON `POST /mcp`).
+- **Refresh-token chain rotation** with reuse detection — rotated tokens
+  inherit `chain_id`; presenting a previously-rotated token revokes the
+  whole chain. All tokens stored as sha256 hex; plaintext leaves the
+  server only at issuance.
+- **Token-endpoint error semantics aligned with RFC 6749 §5.2.** PyJWT
+  decode uses *explicit* `issuer=` and `audience=` kwargs (the SDK's
+  default path lacks both — upstream issues #1443 / #1445).
+- **httpx log + exception redaction** (1.D.0): the URL-query-param
+  filter scrubs `api_key=` and seven other sensitive names; every
+  `raise_for_status()` site is wrapped by `reraise_redacted()` so URLs
+  in propagated exception strings are also scrubbed.
+- **Production deployment** (1.D.1): see "Production deployment" block
+  in the architecture-state section above. v0.3.1 is deployment-only;
+  no code changes from v0.3.0.
+
 ## Phase 1.B / 1.B.1 known limitations
 
 - **Single-string author input + non-Western name order.** `parse_author_string`
@@ -160,7 +223,8 @@ those land in Phase 1.D.
 - **Cross-DB 429 soft-warning inconsistency.** arXiv 429s are soft warnings;
   PubMed and OpenAlex 429s still enter `databases_failed`. Revisit if real
   workloads start hitting authenticated-tier 429s on the others.
-- **API keys appear in httpx URL logs at DEBUG/INFO.** OpenAlex passes its
-  key as `?api_key=...`, NCBI as `?api_key=...`; both are visible in the
-  default httpx log. Rotate keys before exposing the server publicly and
-  add httpx log redaction in Phase 1.D before production deploy.
+- **~~API keys appear in httpx URL logs~~** — mitigated in 1.D.0 via the
+  query-param redaction filter that scrubs `api_key=` and seven other
+  sensitive names to `***` in `httpx` INFO logs. Plus 1.D's
+  `reraise_redacted(httpx.HTTPStatusError)` wrap at every
+  `raise_for_status()` site so URLs in exception strings are also scrubbed.
