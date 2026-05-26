@@ -12,6 +12,7 @@ and arrive here as task specs.
 ## Architecture state
 
 **Phase 1.B + 1.B.1 + 1.D.0 + 1.D + 1.D.1 + 1.D.2 + 1.D.4 — complete.**
+**Phase 2.A → 2.F (regression-baseline fixture) — complete.**
 
 - Dual transport: **stdio** (default) and **Streamable HTTP** (`--transport http`),
   both backed by the official `mcp` Python SDK
@@ -75,9 +76,13 @@ and arrive here as task specs.
 
 - **1.C** — additional citation-integrity tools per the phasing schedule
   maintained in `claude.ai`
-- **1.D.2** — observability gaps surfaced during 1.D.4 bring-up: log
-  verifier-failure reason (currently swallowed in `TokenVerifier`); log
-  tool-name on `CallToolRequest`; orphan-DCR-client cleanup endpoint
+- **1.D.2 backlog** — observability gaps surfaced during 1.D.4 bring-up:
+  log verifier-failure reason (currently swallowed in `TokenVerifier`);
+  log tool-name on `CallToolRequest`; orphan-DCR-client cleanup endpoint
+- **Phase 3** — live-connector regression harness that exercises the
+  30-row fixture (see "Regression baseline fixture" below) against
+  `https://citation-mcp.digitalsurgeon.dev` via the OAuth-gated `/mcp`
+  endpoint, not just the stdio transport used at fixture-capture time
 
 ## Database query policy
 
@@ -131,6 +136,9 @@ on the DGX; logs via `journalctl -u citation-mcp -f`.
 ```bash
 uv run pytest -v
 ```
+
+Current count: **190 passing** (188 unit/integration + 2 fixture-validation
+in `tests/test_regression_30_fixture.py`).
 
 Live integration tests are gated behind `CITATION_MCP_LIVE=1`:
 
@@ -274,6 +282,55 @@ explicit deployment spec, not as part of a code change.
   sensitive names to `***` in `httpx` INFO logs. Plus 1.D's
   `reraise_redacted(httpx.HTTPStatusError)` wrap at every
   `raise_for_status()` site so URLs in exception strings are also scrubbed.
+
+## Regression baseline fixture (Phase 2.F)
+
+- **Fixture lives at `tests/fixtures/regression_30.json`** — 30 verified
+  baseline rows captured against `v0.3.3` stdio transport, stratified
+  across nine categories: identifier-decisive (8), bibliographic-only
+  (6), title-only (4), known-discrepancy (4), pubmed-native-edge (1),
+  retracted (2), corrigendum (1), arxiv-opt-in (2), adversarial (2).
+- **Three-tier expected values per row** (Phase 2.A schema):
+  - `expected.hard` — structural assertions that must match exactly
+    (`match_found`, `doi_resolved`, `pmid_resolved`, `arxiv_id_resolved`,
+    `first_author_surname`, `year`, `match_quality`, `confidence` on
+    matched rows; `match_found` + `rejected_by` on adversarial rows).
+  - `expected.tolerant` — citation_count value with ±20% tolerance band,
+    required and forbidden discrepancy entries keyed on (rule, field),
+    and `allowed_soft_failures` (e.g. `["arxiv"]` for arXiv-opt-in
+    rows where 429s shouldn't fail the row).
+  - `expected.snapshot` — full raw response object for delta-style
+    regression review when a future code change moves the baseline.
+- **Loader at `tests/fixtures/loader.py`** — `load_regression_30()` reads
+  the fixture and raises `FixtureValidationError` on any of 12
+  structural rule violations (count, row_id sequence, category
+  distribution, source provenance, adversarial constraints,
+  non-adversarial completeness, arXiv-row shape, title-only quality,
+  snapshot presence, allowed_soft_failures subset, discrepancy entry
+  shape). Path is resolved relative to the loader file so pytest cwd
+  doesn't matter.
+- **`tests/test_regression_30_fixture.py`** runs the loader on every
+  test run — fixture cannot drift structurally without the test
+  failing fast.
+- **Capture provenance**: `data/regression_30_baseline/` (gitignored)
+  holds the raw stdio responses, the proto-fixture
+  (`fixture_populated.json`), and the protocol-application report
+  (`protocol_report.md`). Edits applied via `scripts/regression_30/`
+  helper scripts (also gitignored). Architect-side decisions for the
+  13 edits applied to the proto-fixture live in `claude.ai` Phase 2.E.3.
+- **Adversarial row 030** ended up on "Path B" — the fallback title
+  ("Comparison of robotic and laparoscopic colectomy outcomes") also
+  cleared all guards and returned a medium-quality match with 9
+  inter-DB discrepancies (Crossref and PubMed resolved to different
+  physical papers). The row now exercises noisy-match-with-multiple-
+  discrepancies regression coverage rather than the originally-intended
+  guard-rejection path. Category retained as `adversarial`; row notes
+  document the deviation.
+- **Adversarial row 029**'s actual `rejected_by` is
+  `title_similarity_below_floor`, not the originally-intended
+  `year_off_by_more_than_one` — title-only inputs with null-year DB
+  candidates skip the year guard and fall through to title-sim
+  (see Phase 2.D Finding 2 in `data/regression_30_baseline/summary.md`).
 
 ## Phase 1.D.1 / 1.D.4 known limitations (1.D.2 backlog)
 
