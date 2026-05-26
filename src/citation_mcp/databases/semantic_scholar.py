@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from ..scoring import normalize_doi
+from ..log_redaction import reraise_redacted
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +165,10 @@ class SemanticScholarClient:
         if response.status_code == 404:
             return None
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         try:
             payload = response.json()
         except ValueError:
@@ -212,8 +215,10 @@ class SemanticScholarClient:
         if response.status_code == 404:
             return []
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         try:
             payload = response.json()
         except ValueError:

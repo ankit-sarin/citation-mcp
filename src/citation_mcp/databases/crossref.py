@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from ..scoring import normalize_doi
+from ..log_redaction import reraise_redacted
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
@@ -184,8 +185,10 @@ class CrossrefClient:
         response = await self._request_with_retries("GET", f"/works/{normalized}")
         if response.status_code == 404:
             return None
-        # TODO(1.D.2): exception string redaction — see log_redaction.py
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as _err:
+            reraise_redacted(_err)
         payload = response.json()
         message = payload.get("message")
         if not isinstance(message, dict):
@@ -215,8 +218,10 @@ class CrossrefClient:
         response = await self._request_with_retries("GET", "/works", params=params)
         if response.status_code == 404:
             return []
-        # TODO(1.D.2): exception string redaction — see log_redaction.py
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as _err:
+            reraise_redacted(_err)
         payload = response.json()
         message = payload.get("message") or {}
         items = message.get("items") or []

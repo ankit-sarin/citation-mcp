@@ -18,6 +18,8 @@ import logging
 import re
 from typing import Any
 
+import httpx
+
 # The leading [?&;] anchor is what prevents `?keyword=foo` from matching:
 # the regex requires one of the listed names to start immediately after a
 # separator, not just to appear as a substring of a longer name.
@@ -74,6 +76,36 @@ class QueryParamRedactionFilter(logging.Filter):
         except Exception:
             return True
         return True
+
+
+def redact_query_string_in_text(text: str) -> str:
+    """Apply the QueryParamRedactionFilter regex to arbitrary text.
+
+    Use this on exception messages (httpx embeds the raw URL in
+    HTTPStatusError.__str__) and any other text that may carry a URL
+    with sensitive query parameters. Idempotent and safe on text without
+    URLs.
+    """
+    if not text:
+        return text
+    return _REDACTION_RE.sub(_REPLACEMENT, text)
+
+
+def reraise_redacted(exc: httpx.HTTPStatusError) -> "httpx.HTTPStatusError":
+    """Wrap an HTTPStatusError so its message is redacted, then re-raise.
+
+    Usage:
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            reraise_redacted(e)
+
+    The wrapped exception preserves type, request, and response. The
+    original is chained via ``from`` so the traceback remains intact.
+    """
+    redacted_msg = redact_query_string_in_text(str(exc))
+    new_exc = type(exc)(redacted_msg, request=exc.request, response=exc.response)
+    raise new_exc from exc
 
 
 def install_redaction_filter(logger_name: str = "httpx") -> QueryParamRedactionFilter | None:

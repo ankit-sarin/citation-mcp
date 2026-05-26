@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-citation-mcp = "citation_mcp.server:main"
+citation-mcp = "citation_mcp.cli:main"
 
 [build-system]
 requires = ["hatchling"]

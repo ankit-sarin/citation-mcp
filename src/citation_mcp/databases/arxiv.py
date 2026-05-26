@@ -19,6 +19,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from ..scoring import normalize_doi
+from ..log_redaction import reraise_redacted
 
 logger = logging.getLogger(__name__)
 
@@ -190,8 +191,10 @@ class ArxivClient:
         clean = _strip_version(arxiv_id.replace("arXiv:", "").replace("arxiv:", ""))
         response = await self._request({"id_list": clean, "max_results": 1})
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         records = _parse_feed(response.content)
         return records[0] if records else None
 
@@ -204,8 +207,10 @@ class ArxivClient:
             "max_results": 1,
         })
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         records = _parse_feed(response.content)
         return records[0] if records else None
 
@@ -232,8 +237,10 @@ class ArxivClient:
             "max_results": rows,
         })
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         return _parse_feed(response.content)
 
     async def aclose(self) -> None:

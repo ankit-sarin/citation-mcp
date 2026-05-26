@@ -28,6 +28,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from ..scoring import normalize_doi
+from ..log_redaction import reraise_redacted
 
 logger = logging.getLogger(__name__)
 
@@ -323,8 +324,10 @@ class PubMedClient:
             self._params(db="pubmed", term=term, retmode="json", retmax=retmax),
         )
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         try:
             payload = response.json()
         except ValueError:
@@ -342,8 +345,10 @@ class PubMedClient:
         if response.status_code == 404:
             return []
         if response.status_code != 200:
-            # TODO(1.D.2): exception string redaction — see log_redaction.py
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as _err:
+                reraise_redacted(_err)
         return _parse_pubmed_article_set(response.content)
 
     async def search_by_pmid(self, pmid: str) -> dict | None:
