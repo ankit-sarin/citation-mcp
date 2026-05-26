@@ -184,6 +184,7 @@ class CrossrefClient:
         response = await self._request_with_retries("GET", f"/works/{normalized}")
         if response.status_code == 404:
             return None
+        # TODO(1.D.2): exception string redaction — see log_redaction.py
         response.raise_for_status()
         payload = response.json()
         message = payload.get("message")
@@ -214,6 +215,7 @@ class CrossrefClient:
         response = await self._request_with_retries("GET", "/works", params=params)
         if response.status_code == 404:
             return []
+        # TODO(1.D.2): exception string redaction — see log_redaction.py
         response.raise_for_status()
         payload = response.json()
         message = payload.get("message") or {}

@@ -58,6 +58,9 @@ class QueryParamRedactionFilter(logging.Filter):
     leaves the record unmodified.
     """
 
+    # In-place mutation of record.msg / record.args is intentional: once a
+    # record is redacted here, any downstream handler that re-emits it stays
+    # redacted, which is the safe direction.
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
         try:
             if isinstance(record.msg, str):

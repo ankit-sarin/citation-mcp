@@ -63,6 +63,15 @@ values (`api_key`, `apikey`, `api-key`, `key`, `token`, `access_token`,
 Header-based auth (e.g. Semantic Scholar's `x-api-key`) is unaffected
 because httpx does not log request headers at INFO.
 
+**Known limitations.** Exception strings raised by `httpx` (e.g.
+`HTTPStatusError` from `response.raise_for_status()`) may embed the
+unredacted URL — the filter operates on `logging` records only, not on
+exception messages. Addressed in v0.3.0 alongside Authorization-header
+redaction. If a consumer reconfigures Python logging via
+`logging.config.dictConfig` after import, call
+`citation_mcp.log_redaction.install_redaction_filter()` afterward to
+reattach the filter.
+
 ## Roadmap
 
 - **Phase 1.A** — stdio transport, `verifyCitation` tool, Crossref-only, SQLite cache *(shipped)*

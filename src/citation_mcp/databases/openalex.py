@@ -224,6 +224,7 @@ class OpenAlexClient:
         if response.status_code == 404:
             return None
         if response.status_code != 200:
+            # TODO(1.D.2): exception string redaction — see log_redaction.py
             response.raise_for_status()
         try:
             payload = response.json()
@@ -243,6 +244,7 @@ class OpenAlexClient:
         if response.status_code == 404:
             return None
         if response.status_code != 200:
+            # TODO(1.D.2): exception string redaction — see log_redaction.py
             response.raise_for_status()
         try:
             payload = response.json()
@@ -275,6 +277,7 @@ class OpenAlexClient:
         if response.status_code == 404:
             return []
         if response.status_code != 200:
+            # TODO(1.D.2): exception string redaction — see log_redaction.py
             response.raise_for_status()
         try:
             payload = response.json()
