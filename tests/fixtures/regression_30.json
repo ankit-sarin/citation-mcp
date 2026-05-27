@@ -566,7 +566,7 @@
             "year": 2022,
             "citation_count": {
               "openalex": 343,
-              "semantic_scholar": 305
+              "semantic_scholar": 306
             },
             "sources": [
               "crossref",
@@ -3015,7 +3015,7 @@
             "year": 2025,
             "citation_count": {
               "openalex": 67,
-              "semantic_scholar": 93
+              "semantic_scholar": 95
             },
             "sources": [
               "crossref",
@@ -3047,11 +3047,11 @@
               "field": "citation_count",
               "values": {
                 "openalex": 67,
-                "semantic_scholar": 93
+                "semantic_scholar": 95
               },
               "resolved_to": {
                 "openalex": 67,
-                "semantic_scholar": 93
+                "semantic_scholar": 95
               },
               "rule": "report_both_diff_gt_20pct"
             }
@@ -4031,7 +4031,7 @@
             "year": 2025,
             "citation_count": {
               "openalex": 22,
-              "semantic_scholar": 36
+              "semantic_scholar": 39
             },
             "sources": [
               "crossref",
@@ -4330,11 +4330,11 @@
               "field": "citation_count",
               "values": {
                 "openalex": 22,
-                "semantic_scholar": 36
+                "semantic_scholar": 39
               },
               "resolved_to": {
                 "openalex": 22,
-                "semantic_scholar": 36
+                "semantic_scholar": 39
               },
               "rule": "report_both_diff_gt_20pct"
             }
@@ -5591,7 +5591,7 @@
             "type": null,
             "year": 2017,
             "citation_count": {
-              "semantic_scholar": 177533
+              "semantic_scholar": 177803
             },
             "sources": [
               "arxiv",
@@ -5660,6 +5660,7 @@
           "confidence": 1.0,
           "match_quality": "high",
           "databases_confirmed": [
+            "arxiv",
             "crossref",
             "openalex",
             "semantic_scholar"
@@ -5706,10 +5707,11 @@
             "type": "proceedings-article",
             "year": 2015,
             "citation_count": {
-              "openalex": 4690,
-              "semantic_scholar": 228677
+              "openalex": 4692,
+              "semantic_scholar": 228844
             },
             "sources": [
+              "arxiv",
               "crossref",
               "openalex",
               "semantic_scholar"
@@ -5756,24 +5758,18 @@
             {
               "field": "citation_count",
               "values": {
-                "openalex": 4690,
-                "semantic_scholar": 228677
+                "openalex": 4692,
+                "semantic_scholar": 228844
               },
               "resolved_to": {
-                "openalex": 4690,
-                "semantic_scholar": 228677
+                "openalex": 4692,
+                "semantic_scholar": 228844
               },
               "rule": "report_both_diff_gt_20pct"
             }
           ],
           "requires_review": false,
-          "warnings": [
-            {
-              "source": "arxiv",
-              "level": "warning",
-              "message": "arxiv rate-limited; result may be incomplete"
-            }
-          ],
+          "warnings": [],
           "score_breakdown": {
             "title_sim": 1.0,
             "first_author_match": 1.0,
@@ -5877,12 +5873,12 @@
       "expected": {
         "hard": {
           "match_found": true,
-          "match_quality": "medium",
-          "confidence": 0.7762,
-          "doi_resolved": "10.1055/s-0044-1780788",
-          "pmid_resolved": "33345569",
+          "match_quality": "low",
+          "confidence": 0.7092,
+          "doi_resolved": "10.1007/978-3-030-58080-3_323-1",
+          "pmid_resolved": null,
           "arxiv_id_resolved": null,
-          "first_author_surname": "Araujo",
+          "first_author_surname": "Tukra",
           "year": 2021
         },
         "tolerant": {
@@ -5892,11 +5888,10 @@
         },
         "snapshot": {
           "verified": true,
-          "confidence": 0.7762,
-          "match_quality": "medium",
+          "confidence": 0.7092,
+          "match_quality": "low",
           "databases_confirmed": [
-            "crossref",
-            "pubmed"
+            "crossref"
           ],
           "databases_queried": [
             "crossref",
@@ -5906,199 +5901,57 @@
           ],
           "databases_failed": [],
           "canonical": {
-            "doi": "10.1055/s-0044-1780788",
-            "pmid": "33345569",
+            "doi": "10.1007/978-3-030-58080-3_323-1",
+            "pmid": null,
             "arxiv_id": null,
             "openalex_id": null,
             "paper_id": null,
-            "title": "ONCOLOGIC OUTCOMES IN ROBOTIC COLECTOMY",
+            "title": "AI in Surgical Robotics",
             "authors": [
               {
-                "family": "Araujo",
-                "given": "Sergio"
+                "family": "Tukra",
+                "given": "Samyakh"
               },
               {
-                "family": "Leite",
-                "given": "Rodrigo Moisés de Almeida"
+                "family": "Lidströmer",
+                "given": "Niklas"
               },
               {
-                "family": "Barchi",
-                "given": "Leandro Cardoso"
+                "family": "Ashrafian",
+                "given": "Hutan"
               },
               {
-                "family": "Callado",
-                "given": "Gustavo Yano"
+                "family": "Giannarou",
+                "given": "Stamatia"
               }
             ],
-            "journal": "Journal of Coloproctology",
-            "journal_iso_abbrev": "Am Surg",
-            "volume": "43",
-            "issue": "S 01",
-            "pages": "S1-S270",
-            "abstract": "INTRODUCTION: Robotic colectomy could reduce morbidity and postoperative recovery over laparoscopic and open procedures. This comparative review evaluates colectomy outcomes based on surgical approach at a single community institution.\nMETHODS: A retrospective review of all patients who underwent colectomy by a fellowship-trained colon and rectal surgeon at a single institution from 2015 through 2019 was performed, and a cohort developed for each approach (open, laparoscopic, and robotic). 30-day outcomes were evaluated. For dichotomous outcomes, univariate logistic regression models were used to quantify the individual effect of each predictor of interest on the odds of each outcome. Continuous outcomes received a similar approach; however, linear and Poisson regression modeling were used, as appropriate.\nRESULTS: 115 patients were evaluated: 14% (n = 16) open, 44% (n = 51) laparoscopic, and 42% (n = 48) robotic. Among the cohorts, there was no statistically significant difference in operative time, rate of reoperation, readmission, or major complications. Robotic colectomies resulted in the shortest length of stay (LOS) (Kruskal-Wallis P < .0001) and decreased estimated blood loss (EBL) (Kruskal-Wallis P = .0012). Median age was 63 years (interquartile range [IQR] 53-72). 54% (n = 62) were female. Median American Society of Anesthesiologists physical status classification was 3 (IQR 2-3). Median body mass index was 28.67 (IQR 25.03-33.47). A malignant diagnosis was noted on final pathology in 44% (n = 51).\nCONCLUSION: Among the 3 approaches, there was no statistically significant difference in 30-day morbidity or mortality. There was a statistically significant decreased LOS and EBL for robotic colectomies.",
-            "type": "journal-article",
+            "journal": "Artificial Intelligence in Medicine",
+            "journal_iso_abbrev": null,
+            "volume": null,
+            "issue": null,
+            "pages": "1-20",
+            "abstract": null,
+            "type": "book-chapter",
             "year": 2021,
             "citation_count": null,
             "sources": [
-              "crossref",
-              "pubmed"
+              "crossref"
             ]
           },
-          "discrepancies": [
-            {
-              "field": "doi",
-              "values": {
-                "crossref": "10.1055/s-0044-1780788",
-                "pubmed": "10.1177/0003134820973384"
-              },
-              "resolved_to": "10.1055/s-0044-1780788",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "title",
-              "values": {
-                "crossref": "ONCOLOGIC OUTCOMES IN ROBOTIC COLECTOMY",
-                "pubmed": "A Comparison of Colectomy Outcomes Utilizing Open, Laparoscopic, and Robotic Techniques."
-              },
-              "resolved_to": "ONCOLOGIC OUTCOMES IN ROBOTIC COLECTOMY",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "authors",
-              "values": {
-                "crossref": [
-                  {
-                    "family": "Araujo",
-                    "given": "Sergio"
-                  },
-                  {
-                    "family": "Leite",
-                    "given": "Rodrigo Moisés de Almeida"
-                  },
-                  {
-                    "family": "Barchi",
-                    "given": "Leandro Cardoso"
-                  },
-                  {
-                    "family": "Callado",
-                    "given": "Gustavo Yano"
-                  }
-                ],
-                "pubmed": [
-                  {
-                    "family": "McCarthy",
-                    "given": "Elizabeth"
-                  },
-                  {
-                    "family": "Gough",
-                    "given": "Benjamin L"
-                  },
-                  {
-                    "family": "Johns",
-                    "given": "Michael S"
-                  },
-                  {
-                    "family": "Hanlon",
-                    "given": "Alexandra"
-                  },
-                  {
-                    "family": "Vaid",
-                    "given": "Sachin"
-                  },
-                  {
-                    "family": "Petrelli",
-                    "given": "Nicholas"
-                  }
-                ]
-              },
-              "resolved_to": [
-                {
-                  "family": "Araujo",
-                  "given": "Sergio"
-                },
-                {
-                  "family": "Leite",
-                  "given": "Rodrigo Moisés de Almeida"
-                },
-                {
-                  "family": "Barchi",
-                  "given": "Leandro Cardoso"
-                },
-                {
-                  "family": "Callado",
-                  "given": "Gustavo Yano"
-                }
-              ],
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "journal",
-              "values": {
-                "crossref": "Journal of Coloproctology",
-                "pubmed": "The American surgeon"
-              },
-              "resolved_to": "Journal of Coloproctology",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "volume",
-              "values": {
-                "crossref": "43",
-                "pubmed": "87"
-              },
-              "resolved_to": "43",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "issue",
-              "values": {
-                "crossref": "S 01",
-                "pubmed": "8"
-              },
-              "resolved_to": "S 01",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "pages",
-              "values": {
-                "crossref": "S1-S270",
-                "pubmed": "1275-1279"
-              },
-              "resolved_to": "S1-S270",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "type",
-              "values": {
-                "crossref": "journal-article",
-                "pubmed": "comparative-study"
-              },
-              "resolved_to": "journal-article",
-              "rule": "highest_authority_db"
-            },
-            {
-              "field": "year",
-              "values": {
-                "crossref": 2023,
-                "pubmed": 2021
-              },
-              "resolved_to": 2021,
-              "rule": "earliest_non_null_year"
-            }
-          ],
-          "requires_review": false,
+          "discrepancies": [],
+          "requires_review": true,
           "warnings": [],
           "score_breakdown": {
-            "title_sim": 0.8143,
+            "title_sim": 0.7458,
             "first_author_match": 0.0,
             "year_match": 0.7,
             "journal_match": 0.0,
             "other_authors_match": 0.0,
-            "weighted_score": 0.7762,
+            "weighted_score": 0.7092,
             "weights_applied": {
-              "title": 0.6666666666666666,
+              "title": 0.2,
               "first_author": 0.0,
-              "year": 0.3333333333333333,
+              "year": 0.7999999999999999,
               "journal": 0.0,
               "other_authors": 0.0
             },
