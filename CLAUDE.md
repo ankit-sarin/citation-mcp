@@ -13,6 +13,7 @@ and arrive here as task specs.
 
 **Phase 1.B + 1.B.1 + 1.D.0 + 1.D + 1.D.1 + 1.D.2 + 1.D.4 — complete.**
 **Phase 2.A → 2.F (regression-baseline fixture) — complete.**
+**Phase v0.3.5 (parser rewrite + force_refresh) — complete.**
 
 - Dual transport: **stdio** (default) and **Streamable HTTP** (`--transport http`),
   both backed by the official `mcp` Python SDK
@@ -137,7 +138,7 @@ on the DGX; logs via `journalctl -u citation-mcp -f`.
 uv run pytest -v
 ```
 
-Current count: **190 passing** (188 unit/integration + 2 fixture-validation
+Current count: **228 passing** (226 unit/integration + 2 fixture-validation
 in `tests/test_regression_30_fixture.py`).
 
 Live integration tests are gated behind `CITATION_MCP_LIVE=1`:
@@ -326,6 +327,18 @@ explicit deployment spec, not as part of a code change.
   discrepancies regression coverage rather than the originally-intended
   guard-rejection path. Category retained as `adversarial`; row notes
   document the deviation.
+
+  **v0.3.5 update:** row_030's match shifted from Araujo et al.
+  (`10.1055/s-0044-1780788`) to Tukra et al. book chapter
+  (`10.1007/978-3-030-58080-3_323-1`) between Phase 2.D baseline
+  (May 26) and v0.3.5 regeneration (May 27). Cause is persistent
+  Crossref index reshuffle, not run-to-run flakiness — back-to-back
+  F.1 and F.1.b regen runs both selected Tukra. The row's
+  `expected.tolerant.discrepancies_required` is and has always been
+  empty `[]`; Phase 2.E deliberately abstained from discrepancy
+  requirements on adversarial-noisy rows because asserting specific
+  tuples on them would be brittle. Snapshot-tier drift on this row is
+  acceptable by design.
 - **Adversarial row 029**'s actual `rejected_by` is
   `title_similarity_below_floor`, not the originally-intended
   `year_off_by_more_than_one` — title-only inputs with null-year DB
@@ -351,3 +364,84 @@ explicit deployment spec, not as part of a code change.
   harmful. A `DELETE FROM clients WHERE created_at < now - 30 days AND
   client_id NOT IN (SELECT DISTINCT client_id FROM refresh_tokens WHERE
   revoked_at IS NULL)` style sweep is the right shape.
+
+## Phase v0.3.5 refinements (vs. 1.D.2 / 1.D.4)
+
+- **`parse_author_string` rewrite (v0.3.5)** (scoring.py). Handles three
+  explicit forms — Western `"Given Family"`, NLM `"Family Initials"`, Comma
+  `"Family, Given"`. Initials-Family inputs like `"A J Wakefield"` fall
+  through to the Western branch's last-token-is-family rule, which produces
+  identical output because their family is single-token. A dedicated
+  Initials-Family branch was introduced in v0.3.5.C.2 and removed in
+  v0.3.5.C.3 after Phase v0.3.5.F.1 regeneration revealed it caused
+  parser-vs-DB mismatches on multi-token-family + leading-initial inputs
+  (e.g. `"S. Campaña Bastidas"`) without adding value for canonical inputs.
+  Detection rule: a token is an "initial" if, period-stripped, it is 1–3
+  alphabetic all-uppercase characters; comma always wins. The `given` half
+  of the returned tuple is best-effort — no production consumer reads it;
+  only the unit test and `_empty_canonical_from_input` use it.
+
+- **`_empty_canonical_from_input` routes string authors through the parser.**
+  Pre-v0.3.5 the no-match canonical fallback dumped raw NLM strings into
+  `{family: "Polack FP", given: ""}`. v0.3.5 routes string inputs through
+  `parse_author_string` so no-match outputs are structurally consistent
+  with matched-path outputs (which are always structured `{family, given}`
+  from the DB clients).
+
+- **`force_refresh: bool = false` parameter** on all three caching tools
+  (`verifyCitation`, `bulkVerifyCitations`, `resolveIdentifier`). When
+  `true`, the read-cache is bypassed; the write path is unchanged so fresh
+  results populate the cache via `INSERT ON CONFLICT DO UPDATE`.
+  `make_cache_key` does NOT incorporate `force_refresh` — that would defeat
+  the overwrite-stale-value semantic by writing to a different row than
+  normal calls. Forced refreshes get fresh full TTL based on the new match
+  quality. Use only for testing, validation, or after known upstream-DB
+  updates.
+
+## Phase v0.3.5 known behaviors and deferred consolidations
+
+- **Year-guard precedence.** The year sanity guard fires only when BOTH
+  `input_year` and `cand_year` are populated. When the candidate lacks a
+  year, the guard skips and downstream checks (first-author-mismatch,
+  title-similarity) run instead. Observed at Phase 2.D row_029: predicted
+  `year_off_by_more_than_one`, actual `title_similarity_below_floor`
+  because the candidate had no year field. Behavior is correct; documenting
+  so the precedence is visible to future readers.
+
+- **Authors shape asymmetry (input vs output).** Input `authors` accepts
+  `list[str]` only on the MCP-published schema. Output `canonical.authors`
+  is always `list[{family, given}]` regardless of input form. This is
+  deliberate post-merge canonicalization at the scoring layer — string
+  inputs route through `parse_author_string` (for no-match paths via
+  `_empty_canonical_from_input`) or DB-side splitters (for matched paths).
+  Downstream consumers should expect the dict shape on output.
+
+- **Cross-tool cache-warning asymmetry.** `verify_citation` and
+  `bulk_verify_citations` append `{"source": "cache"}` to the warnings list
+  on cache hits. `resolve_identifier` does not — its cached early-return
+  passes the stored result through unchanged. To detect cache hits in
+  tests, use the warning convention for verify/bulk and per-DB call counts
+  for resolve. The `databases_queried` field is also NOT a reliable
+  cache-hit signal: cached returns include the originally stored value.
+  Harmonization is a v0.4+ candidate (would change resolve's response
+  shape for downstream consumers — non-zero blast radius).
+
+- **Parallel name-splitters (deferred consolidation candidate).** Three DB
+  clients have string-parsing name splitters with the same NLM blind-spot
+  that `parse_author_string` was rewritten to fix in v0.3.5: `_split_name`
+  in `databases/openalex.py` (byte-identical to S2's), `_split_name` in
+  `databases/semantic_scholar.py`, and inline name-split in
+  `databases/arxiv.py`. They work in practice because DBs return non-NLM
+  display strings, but a theoretical Layer 3 cross-DB discrepancy could
+  surface if any DB ever returned an NLM string. v0.4+ candidate: extract
+  a shared `split_display_name()` helper using `parse_author_string`-
+  equivalent three-form logic. Deferred from v0.3.5 to keep hotfix scope
+  tight.
+
+- **Fixture tolerant-tier discrepancy assertions are shape-only.** Rows
+  whose `expected.tolerant.discrepancies_required` references
+  `citation_count` (notably rows 017 and 020) assert the `(rule, field)`
+  tuple shape, not specific numeric values. Upstream `citation_count`
+  drift is absorbed automatically — no reconciliation needed when DB-side
+  counts change. Only structural changes in the discrepancy generation
+  (new rule types, removed fields) would invalidate these assertions.

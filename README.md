@@ -20,6 +20,31 @@ Tunnel / Access deployment lands in a downstream step.
 - `resolveIdentifier` — cross-converts DOI ↔ PMID ↔ arXiv ID ↔ OpenAlex Work
   ID ↔ Semantic Scholar paper ID
 
+## Tool usage notes
+
+### Forcing a fresh fetch
+
+All three caching tools accept an optional `force_refresh: bool = false`.
+Pass `true` to bypass the read-cache and force a fresh DB roundtrip; results
+are still written to cache for subsequent normal calls.
+
+```text
+verifyCitation(doi="10.1056/NEJMoa2034577", force_refresh=true)
+bulkVerifyCitations(citations=[...], force_refresh=true)
+resolveIdentifier(identifier="10.1056/NEJMoa2034577", from_type="doi", force_refresh=true)
+```
+
+Use only for testing, validation, or after known upstream-DB updates.
+Routine production calls should leave it at the default.
+
+### Authors field — input vs output shape
+
+`verifyCitation` and `bulkVerifyCitations` accept `authors: list[str]` only
+on input. The response's `canonical.authors` is always
+`list[{family, given}]` regardless of input form. String inputs are parsed
+into structured form at the scoring layer (Comma, NLM, Initials-Family, and
+Western forms are recognised).
+
 ## Quick start
 
 ```bash
