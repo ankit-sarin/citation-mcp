@@ -31,6 +31,7 @@ from .scoring import (
     merge_canonical_records,
     normalize_author_surname,
     normalize_doi,
+    parse_author_string,
     score_match,
 )
 
@@ -109,7 +110,10 @@ def register_tools(target: FastMCP) -> None:
             "Verify a citation against five databases (Crossref, PubMed, OpenAlex, "
             "Semantic Scholar, arXiv) in parallel. Provide at least one of doi, pmid, "
             "or title. Returns match quality, canonical record, inter-DB discrepancies, "
-            "and per-DB confirmation status."
+            "and per-DB confirmation status. "
+            "Set force_refresh=true to bypass the read-cache and force a fresh DB "
+            "roundtrip; results are still written to cache for subsequent normal calls. "
+            "Use only for testing, validation, or after known upstream-DB updates."
         ),
     )(verify_citation_tool)
     target.tool(
@@ -117,7 +121,11 @@ def register_tools(target: FastMCP) -> None:
         description=(
             "Verify up to 200 citations in parallel against all configured databases. "
             "Returns a list of per-citation results in input order plus a summary "
-            "(counts by match quality, cache hits, elapsed seconds)."
+            "(counts by match quality, cache hits, elapsed seconds). "
+            "Set force_refresh=true to bypass the read-cache for every citation in the "
+            "batch and force fresh DB roundtrips; results are still written to cache for "
+            "subsequent normal calls. Use only for testing, validation, or after known "
+            "upstream-DB updates."
         ),
     )(bulk_verify_citations_tool)
     target.tool(
@@ -125,7 +133,10 @@ def register_tools(target: FastMCP) -> None:
         description=(
             "Cross-convert paper identifiers across DOI, PMID, arXiv ID, OpenAlex Work ID, "
             "and Semantic Scholar paper ID. Specify the source identifier and its type; "
-            "returns the corresponding identifiers in each requested target system."
+            "returns the corresponding identifiers in each requested target system. "
+            "Set force_refresh=true to bypass the read-cache and force a fresh DB "
+            "roundtrip; results are still written to cache for subsequent normal calls. "
+            "Use only for testing, validation, or after known upstream-DB updates."
         ),
     )(resolve_identifier_tool)
 
@@ -139,6 +150,14 @@ mcp = FastMCP("citation-mcp", lifespan=_app_lifespan)
 
 
 def _empty_canonical_from_input(input_citation: dict) -> dict:
+    raw_authors = input_citation.get("authors") or []
+    authors: list[dict] = []
+    for a in raw_authors:
+        if isinstance(a, str):
+            surname, given = parse_author_string(a)
+            authors.append({"family": surname, "given": given})
+        else:
+            authors.append(a)
     return {
         "doi": input_citation.get("doi"),
         "pmid": input_citation.get("pmid"),
@@ -146,10 +165,7 @@ def _empty_canonical_from_input(input_citation: dict) -> dict:
         "openalex_id": None,
         "paper_id": None,
         "title": input_citation.get("title"),
-        "authors": [
-            {"family": a, "given": ""} if isinstance(a, str) else a
-            for a in (input_citation.get("authors") or [])
-        ] or None,
+        "authors": authors or None,
         "year": input_citation.get("year"),
         "journal": input_citation.get("journal"),
         "journal_iso_abbrev": None,
@@ -294,9 +310,13 @@ async def verify_citation(
     openalex: OpenAlexClient | None = None,
     semantic_scholar: SemanticScholarClient | None = None,
     arxiv: ArxivClient | None = None,
+    force_refresh: bool = False,
 ) -> dict:
     """Phase 1.B verifyCitation: dispatch to all configured DBs in parallel,
     apply candidate fall-through per DB, then merge with Layer 3.
+
+    When ``force_refresh=True`` the read-cache is bypassed and a fresh DB
+    roundtrip is performed; the result is still written to cache on the way out.
     """
     # Input validation
     if not (input_citation.get("doi") or input_citation.get("pmid") or input_citation.get("title")):
@@ -306,12 +326,13 @@ async def verify_citation(
         }
 
     cache_key = make_cache_key(input_citation)
-    cached = await cache.get(cache_key)
-    if cached is not None:
-        warnings = list(cached.get("warnings") or [])
-        warnings.append({"source": "cache"})
-        cached["warnings"] = warnings
-        return cached
+    if not force_refresh:
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            warnings = list(cached.get("warnings") or [])
+            warnings.append({"source": "cache"})
+            cached["warnings"] = warnings
+            return cached
 
     first_author = _first_author_str(input_citation)
     warnings: list[dict] = []
@@ -448,7 +469,13 @@ async def bulk_verify_citations(
     openalex: OpenAlexClient | None = None,
     semantic_scholar: SemanticScholarClient | None = None,
     arxiv: ArxivClient | None = None,
+    force_refresh: bool = False,
 ) -> dict:
+    """Bulk wrapper over verify_citation with a citation-level concurrency cap.
+
+    When ``force_refresh=True`` the read-cache is bypassed for every citation
+    in the batch; per-citation results are still written to cache on the way out.
+    """
     if not isinstance(citations, list) or not citations:
         return {
             "error": "citations_must_be_non_empty_list",
@@ -471,6 +498,7 @@ async def bulk_verify_citations(
                 openalex=openalex,
                 semantic_scholar=semantic_scholar,
                 arxiv=arxiv,
+                force_refresh=force_refresh,
             )
 
     results = await asyncio.gather(*[_one(c) for c in citations])
@@ -555,7 +583,13 @@ async def resolve_identifier(
     openalex: OpenAlexClient | None = None,
     semantic_scholar: SemanticScholarClient | None = None,
     arxiv: ArxivClient | None = None,
+    force_refresh: bool = False,
 ) -> dict:
+    """Cross-convert identifiers across the five supported systems.
+
+    When ``force_refresh=True`` the read-cache is bypassed and a fresh DB
+    roundtrip is performed; the result is still written to cache on the way out.
+    """
     if from_type not in _RESOLVE_TYPES:
         return {
             "error": "invalid_from_type",
@@ -570,13 +604,14 @@ async def resolve_identifier(
             return {"error": "invalid_to_type", "message": f"to_type '{t}' invalid."}
 
     cache_key = _resolve_cache_key(from_type, identifier)
-    cached = await cache.get(cache_key)
-    if cached is not None:
-        cached_filtered = dict(cached)
-        cached_filtered["resolved"] = {
-            k: cached["resolved"].get(k) for k in to_types
-        }
-        return cached_filtered
+    if not force_refresh:
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            cached_filtered = dict(cached)
+            cached_filtered["resolved"] = {
+                k: cached["resolved"].get(k) for k in to_types
+            }
+            return cached_filtered
 
     resolved: dict[str, str | None] = {k: None for k in _RESOLVE_TYPES}
     resolved[from_type] = identifier
@@ -677,6 +712,7 @@ async def verify_citation_tool(
     volume: str | None = None,
     issue: str | None = None,
     pages: str | None = None,
+    force_refresh: bool = False,
 ) -> str:
     logger.info("tool_call name=%s", "verifyCitation")
     input_citation = {
@@ -702,6 +738,7 @@ async def verify_citation_tool(
         openalex=app_ctx.openalex,
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
+        force_refresh=force_refresh,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -709,6 +746,7 @@ async def verify_citation_tool(
 async def bulk_verify_citations_tool(
     ctx: Context,
     citations: list[dict],
+    force_refresh: bool = False,
 ) -> str:
     logger.info("tool_call name=%s", "bulkVerifyCitations")
     app_ctx: AppContext = ctx.request_context.lifespan_context
@@ -720,6 +758,7 @@ async def bulk_verify_citations_tool(
         openalex=app_ctx.openalex,
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
+        force_refresh=force_refresh,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -729,6 +768,7 @@ async def resolve_identifier_tool(
     identifier: str,
     from_type: str,
     to_types: list[str] | None = None,
+    force_refresh: bool = False,
 ) -> str:
     logger.info("tool_call name=%s", "resolveIdentifier")
     app_ctx: AppContext = ctx.request_context.lifespan_context
@@ -742,6 +782,7 @@ async def resolve_identifier_tool(
         openalex=app_ctx.openalex,
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
+        force_refresh=force_refresh,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 

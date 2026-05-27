@@ -94,25 +94,70 @@ def normalize_title(title: str) -> str:
 
 
 def parse_author_string(name: str) -> tuple[str, str]:
-    """Return (surname, given_initials) tuple. Handle 'Last, F M' and 'F M Last' formats."""
+    """Return (surname, given) for an author name string.
+
+    Handles three forms explicitly:
+      - Western "Given Family"     e.g. "Fernando Polack"
+      - NLM     "Family Initials"  e.g. "Polack FP", "Liu S", "Doe J.A."
+      - Comma   "Family, Given"    e.g. "Polack, Fernando P."
+
+    Initials-Family inputs (e.g. "A J Wakefield") are handled correctly via
+    the Western branch's last-token-is-family rule — they don't need a
+    dedicated branch because their family is single-token. A dedicated
+    Initials-Family branch was introduced in v0.3.5.C.2 and removed in
+    v0.3.5.C.3 after the Phase v0.3.5.F.1 regeneration revealed it caused
+    parser-vs-DB mismatches on multi-token-family + leading-initial inputs
+    (e.g. "S. Campaña Bastidas") without adding value for canonical inputs.
+
+    Detection rules (after normalize + comma short-circuit):
+      - A token is an "initial" if, with periods stripped, it is 1–3
+        alphabetic characters, all uppercase. So "F", "FP", "JAB", "F.P.",
+        "P." all qualify; "de", "van", "Polack", "Navarro-Alarcón" do not.
+      - Comma always wins regardless of token content.
+      - Single-token input is treated as a mononym surname.
+      - All-initials input ("F P") returns ("", "F P") — degenerate; no surname.
+
+    Surname extraction is the correctness gate. ``given`` is best-effort
+    and may be approximate for unusual forms; no production code path reads
+    it (every consumer routes through ``normalize_author_surname``, which
+    discards ``given``).
+    """
     if name is None:
         return ("", "")
     s = name.strip()
     if not s:
         return ("", "")
+
     if "," in s:
-        parts = s.split(",", 1)
-        surname = parts[0].strip()
-        given = parts[1].strip() if len(parts) > 1 else ""
-    else:
-        tokens = s.split()
-        if len(tokens) == 1:
-            surname = tokens[0]
-            given = ""
+        family, _, given = s.partition(",")
+        return (family.strip(), given.strip())
+
+    tokens = s.split()
+    if len(tokens) == 1:
+        return (tokens[0], "")
+
+    def _is_initial(tok: str) -> bool:
+        stripped = tok.replace(".", "")
+        return 1 <= len(stripped) <= 3 and stripped.isalpha() and stripped.isupper()
+
+    flags = [_is_initial(t) for t in tokens]
+
+    if all(flags):
+        return ("", " ".join(tokens))
+
+    trailing = 0
+    for f in reversed(flags):
+        if f:
+            trailing += 1
         else:
-            surname = tokens[-1]
-            given = " ".join(tokens[:-1])
-    return surname, given
+            break
+
+    if trailing > 0:
+        split = len(tokens) - trailing
+        return (" ".join(tokens[:split]), " ".join(tokens[split:]))
+    # Western — also handles Initials-Family ("A J Wakefield") correctly via
+    # the last-token-is-family rule.
+    return (tokens[-1], " ".join(tokens[:-1]))
 
 
 def normalize_author_surname(name: str) -> str:
@@ -361,6 +406,13 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     )
 
     # --- Hard sanity guards. Apply in order; first hit wins. ---
+    # Year-guard precedence: the year branch fires only when BOTH input_year
+    # and cand_year are populated. If cand_year is None, the year branch is
+    # skipped and the elif chain falls through to first_author/title_sim
+    # guards. Observed at Phase 2.D row_029: predicted year_off_by_more_than_one,
+    # actual title_similarity_below_floor because the candidate had no year
+    # field. Behavior is correct; this note exists so the precedence is
+    # visible to future readers.
     rejected_by: str | None = None
     if input_year is not None and cand_year is not None and abs(int(input_year) - int(cand_year)) > 1:
         rejected_by = "year_off_by_more_than_one"

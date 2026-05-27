@@ -82,3 +82,40 @@ async def test_bulk_cache_hits_counted(crossref, cache):
     assert first["summary"]["cache_hits"] == 0
     second = await bulk_verify_citations(citations, crossref, cache)
     assert second["summary"]["cache_hits"] == 1
+
+
+async def test_bulk_force_refresh_zero_cache_hits(crossref, cache):
+    citations = [{"doi": POLACK_DOI}]
+    # First call populates the cache for this DOI.
+    first = await bulk_verify_citations(citations, crossref, cache)
+    assert first["summary"]["cache_hits"] == 0
+    # Second call with force_refresh=True must bypass the read-cache.
+    second = await bulk_verify_citations(citations, crossref, cache, force_refresh=True)
+    assert second["summary"]["cache_hits"] == 0
+    assert not any(
+        w.get("source") == "cache" for w in second["results"][0].get("warnings", [])
+    )
+    # Sanity: a follow-up default call still hits the refreshed cache.
+    third = await bulk_verify_citations(citations, crossref, cache)
+    assert third["summary"]["cache_hits"] == 1
+
+
+async def test_bulk_force_refresh_propagates_to_all(crossref, cache):
+    # Three distinct DOIs so each gets its own cache key.
+    citations = [
+        {"doi": POLACK_DOI},
+        {"doi": "10.1056/test-a", "title": POLACK_TITLE,
+         "authors": ["Polack, Fernando P."], "year": 2020,
+         "journal": "New England Journal of Medicine"},
+        {"doi": "10.1056/test-b", "title": POLACK_TITLE,
+         "authors": ["Polack, Fernando P."], "year": 2020,
+         "journal": "New England Journal of Medicine"},
+    ]
+    # Populate the cache for all three.
+    first = await bulk_verify_citations(citations, crossref, cache)
+    assert first["summary"]["cache_hits"] == 0
+    # Forced refresh — every citation must skip the read-cache, not just one.
+    second = await bulk_verify_citations(citations, crossref, cache, force_refresh=True)
+    assert second["summary"]["cache_hits"] == 0
+    for r in second["results"]:
+        assert not any(w.get("source") == "cache" for w in r.get("warnings", []))

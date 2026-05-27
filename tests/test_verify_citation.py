@@ -6,7 +6,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from citation_mcp.server import verify_citation
+from citation_mcp.server import _empty_canonical_from_input, verify_citation
 
 from .conftest import (
     POLACK_ARXIV_FEED_EMPTY,
@@ -487,3 +487,103 @@ async def test_arxiv_rate_limited_is_soft_warning(cache, monkeypatch):
     finally:
         for c in (crossref, pubmed, openalex, s2, arxiv):
             await c.aclose()
+
+
+# ---------------------------------------------------------------------------
+# v0.3.5: no-match canonical fallback routes string authors through
+# parse_author_string so NLM-form inputs ("Polack FP") yield a structured
+# {family, given} instead of dumping the whole string into family.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_canonical_from_input_parses_nlm_string_authors():
+    canonical = _empty_canonical_from_input(
+        {"title": "Untitled", "authors": ["Polack FP", "Garcia M"]}
+    )
+    assert canonical["authors"][0] == {"family": "Polack", "given": "FP"}
+    assert canonical["authors"][1] == {"family": "Garcia", "given": "M"}
+
+
+def test_empty_canonical_from_input_preserves_dict_authors():
+    canonical = _empty_canonical_from_input(
+        {"title": "Untitled", "authors": [{"family": "Polack", "given": "Fernando P."}]}
+    )
+    assert canonical["authors"][0] == {"family": "Polack", "given": "Fernando P."}
+
+
+def test_empty_canonical_from_input_parses_western_string_authors():
+    canonical = _empty_canonical_from_input(
+        {"title": "Untitled", "authors": ["Fernando Polack"]}
+    )
+    assert canonical["authors"][0] == {"family": "Polack", "given": "Fernando"}
+
+
+# ---------------------------------------------------------------------------
+# v0.3.5.D: force_refresh bypasses the read-cache but still writes on the way
+# out, so subsequent normal calls hit the refreshed entry.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def counted_multi_db(monkeypatch):
+    """Same as multi_db but each DB's handler tracks invocation count."""
+    monkeypatch.setenv("OPENALEX_API_KEY", "k")
+    monkeypatch.setenv("NCBI_API_KEY", "k")
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "k")
+    counts = {"crossref": 0, "pubmed": 0, "openalex": 0, "semantic_scholar": 0}
+
+    def _wrap(name: str, base):
+        def _handler(request: httpx.Request) -> httpx.Response:
+            counts[name] += 1
+            return base(request)
+        return _handler
+
+    clients = {
+        "crossref": make_mock_crossref_client(_wrap("crossref", polack_crossref_handler)),
+        "pubmed": make_mock_pubmed_client(_wrap("pubmed", polack_pubmed_handler)),
+        "openalex": make_mock_openalex_client(_wrap("openalex", polack_openalex_handler)),
+        "semantic_scholar": make_mock_s2_client(_wrap("semantic_scholar", polack_s2_handler)),
+        "arxiv": make_mock_arxiv_client(polack_arxiv_handler, min_interval=0.0),
+    }
+    try:
+        yield clients, counts
+    finally:
+        for c in clients.values():
+            await c.aclose()
+
+
+async def test_force_refresh_bypasses_cache(counted_multi_db, cache):
+    multi_db, counts = counted_multi_db
+    input_citation = {"doi": POLACK_DOI}
+    first = await verify_citation(input_citation, cache=cache, **_call_kwargs(multi_db))
+    crossref_after_first = counts["crossref"]
+    assert crossref_after_first > 0
+    second = await verify_citation(
+        input_citation, cache=cache, force_refresh=True, **_call_kwargs(multi_db)
+    )
+    # No cache warning on the forced call.
+    assert not any(w.get("source") == "cache" for w in second["warnings"])
+    # DB was re-queried — crossref handler invoked again.
+    assert counts["crossref"] > crossref_after_first
+    # Result quality unchanged because the upstream DBs return the same record.
+    assert first["match_quality"] == second["match_quality"]
+
+
+async def test_force_refresh_writes_fresh_to_cache(counted_multi_db, cache):
+    multi_db, counts = counted_multi_db
+    input_citation = {"doi": POLACK_DOI}
+    # Call 1: populates cache.
+    await verify_citation(input_citation, cache=cache, **_call_kwargs(multi_db))
+    crossref_after_first = counts["crossref"]
+    # Call 2: force_refresh — bypass read, write fresh.
+    second = await verify_citation(
+        input_citation, cache=cache, force_refresh=True, **_call_kwargs(multi_db)
+    )
+    crossref_after_second = counts["crossref"]
+    assert not any(w.get("source") == "cache" for w in second["warnings"])
+    assert crossref_after_second > crossref_after_first
+    # Call 3: default force_refresh=False — should hit the refreshed cache.
+    third = await verify_citation(input_citation, cache=cache, **_call_kwargs(multi_db))
+    assert any(w.get("source") == "cache" for w in third["warnings"])
+    # Crossref handler NOT invoked on the cached third call.
+    assert counts["crossref"] == crossref_after_second

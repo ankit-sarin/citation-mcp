@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from citation_mcp.scoring import (
     check_identifier_match,
     journals_match,
@@ -34,17 +36,60 @@ def test_normalize_title_unicode_punct_and_articles():
     assert normalize_title("An Investigation: Sub-Title") == "investigation sub title"
 
 
-def test_normalize_author_surname_both_formats():
-    assert normalize_author_surname("Polack, Fernando P.") == "polack"
-    assert normalize_author_surname("Fernando P. Polack") == "polack"
-    assert normalize_author_surname("García-López, María") == "garcia lopez"
-    assert normalize_author_surname("O'Brien, Sean") == "obrien"
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Pre-existing cases — preserved.
+        ("Polack, Fernando P.", "polack"),
+        ("Fernando P. Polack", "polack"),
+        ("García-López, María", "garcia lopez"),
+        ("O'Brien, Sean", "obrien"),
+        # v0.3.5 expansions — NLM, Initials-Family, accented.
+        ("Polack FP", "polack"),
+        ("Garcia M", "garcia"),
+        ("de Souza F", "de souza"),
+        ("A J Wakefield", "wakefield"),
+        ("J A Walker-Smith", "walker smith"),
+        ("François Köhler", "kohler"),
+    ],
+)
+def test_normalize_author_surname_both_formats(raw, expected):
+    assert normalize_author_surname(raw) == expected
 
 
-def test_parse_author_string():
-    assert parse_author_string("Polack, Fernando P.") == ("Polack", "Fernando P.")
-    assert parse_author_string("Fernando P. Polack") == ("Polack", "Fernando P.")
-    assert parse_author_string("Polack") == ("Polack", "")
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Western.
+        ("Fernando Polack", ("Polack", "Fernando")),
+        ("Maria Garcia Lopez", ("Lopez", "Maria Garcia")),
+        ("David Navarro-Alarcón", ("Navarro-Alarcón", "David")),
+        ("Fernando de Souza", ("Souza", "Fernando de")),
+        ("François Köhler", ("Köhler", "François")),
+        # NLM.
+        ("Polack FP", ("Polack", "FP")),
+        ("Garcia M", ("Garcia", "M")),
+        ("Doe JAB", ("Doe", "JAB")),
+        ("Polack F.P.", ("Polack", "F.P.")),
+        ("Polack F P", ("Polack", "F P")),
+        ("de Souza F", ("de Souza", "F")),
+        # Comma.
+        ("Polack, Fernando P.", ("Polack", "Fernando P.")),
+        ("Polack, FP", ("Polack", "FP")),
+        # Initials-Family.
+        ("A J Wakefield", ("Wakefield", "A J")),
+        ("J A Walker-Smith", ("Walker-Smith", "J A")),
+        # Edge cases.
+        ("Madonna", ("Madonna", "")),
+        ("Navarro-Alarcón", ("Navarro-Alarcón", "")),
+        ("", ("", "")),
+        (None, ("", "")),
+        ("  Polack  ", ("Polack", "")),
+        ("F P", ("", "F P")),
+    ],
+)
+def test_parse_author_string(raw, expected):
+    assert parse_author_string(raw) == expected
 
 
 def test_normalize_journal():
