@@ -98,6 +98,30 @@ def cmd_status(_args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    from .validate import run_validation_sync
+
+    try:
+        report_path, gate_passed = run_validation_sync(
+            cold_only=args.cold_only,
+            warm_only=args.warm_only,
+        )
+    except SystemExit:
+        raise
+    except HarnessOAuthError as e:
+        print(f"OAuth error: {e}", file=sys.stderr)
+        return 3
+    except Exception as e:  # noqa: BLE001 — orchestration boundary
+        print(f"Validation harness failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return 3
+    print(f"Report written: {report_path}")
+    if gate_passed:
+        print("v1.0 gate: PASS")
+        return 0
+    print("v1.0 gate: FAIL (see report)", file=sys.stderr)
+    return 1
+
+
 def cmd_token(_args: argparse.Namespace) -> int:
     with HarnessOAuthClient() as client:
         try:
@@ -127,6 +151,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="Show token status (JSON, no raw secrets)")
     sub.add_parser("token", help="Print a currently valid access token")
 
+    validate_parser = sub.add_parser(
+        "validate", help="Run citation-mcp validation harness"
+    )
+    validate_parser.add_argument(
+        "--cold-only",
+        action="store_true",
+        help="Run only the cold-cache pass (debug mode; gate fails)",
+    )
+    validate_parser.add_argument(
+        "--warm-only",
+        action="store_true",
+        help="Run only the warm-cache pass (debug mode; gate fails)",
+    )
+
     args = parser.parse_args(argv)
     handlers = {
         "register": cmd_register,
@@ -134,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         "refresh": cmd_refresh,
         "status": cmd_status,
         "token": cmd_token,
+        "validate": cmd_validate,
     }
     return handlers[args.cmd](args)
 

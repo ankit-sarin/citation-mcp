@@ -28,3 +28,7 @@ logs/
 
 # Claude working state
 primer.md
+
+# Harness validation reports — generated artifacts, not source
+harness/reports/*
+!harness/reports/.gitkeep
