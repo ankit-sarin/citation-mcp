@@ -10,6 +10,29 @@ tagged release (SDK host-check disable, commit `b9c50aa`) shipped without
 a corresponding source-pin bump. v0.3.3 brings the pin in sync with the
 tag history.
 
+## [1.0.0] — 2026-05-28
+
+First stable release. The deployed connector is validated end-to-end
+against a 30-citation regression baseline through the live OAuth +
+Cloudflare Tunnel + bulk-endpoint path.
+
+### Added
+
+- Validation harness (`harness/`): OAuth 2.1 PKCE client, MCP Streamable
+  HTTP transport client with reactive 401-refresh, three-tier comparator
+  (hard / tolerant / snapshot), Markdown report generation, and the
+  `validate` CLI subcommand running cold-cache and warm-cache bulk
+  passes.
+- Nightly validation via cron (`harness/run_nightly.sh`, 09:30 UTC) with
+  morning-digest gate reporting.
+
+### Notes
+
+- The validation gate measures connector-controlled correctness only —
+  citation matching, canonical merge, citation-count bands, and
+  discrepancy detection. Upstream-database latency and transient
+  single-DB availability are reported informationally and do not gate.
+
 ## [0.3.5] — 2026-05-27
 
 ### Fixed
