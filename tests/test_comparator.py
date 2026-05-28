@@ -333,6 +333,35 @@ def test_tolerant_empty_databases_failed():
     assert result.soft_failures.disallowed == []
 
 
+def test_tolerant_soft_failure_does_not_affect_gate_verdict():
+    """Per Phase 1.E.2.F.3 recalibration: soft_failures sub-check is computed
+    and reported, but does NOT contribute to TolerantTierResult.passed
+    (the tolerant gate verdict). A disallowed upstream-DB failure must
+    leave the tolerant gate PASSING when the gate-relevant sub-checks
+    (citation_count band, discrepancies_required, discrepancies_forbidden)
+    all pass."""
+    expected = _tol(
+        citation_count={"value": 100, "tolerance_pct": 20},
+        discrepancies_required=[],
+        discrepancies_forbidden=[],
+        allowed_soft_failures=["arxiv"],
+    )
+    actual = {
+        "canonical": {"citation_count": 105},     # within band
+        "discrepancies": [],                       # required empty, forbidden absent
+        "databases_failed": ["semantic_scholar"],  # disallowed → soft_failures.passed=False
+    }
+    result = compare_tolerant(actual, expected)
+    assert result.soft_failures is not None
+    assert result.soft_failures.passed is False           # sub-check fails
+    assert result.soft_failures.disallowed == ["semantic_scholar"]
+    assert result.citation_count.passed is True
+    assert result.discrepancies_required.passed is True
+    assert result.discrepancies_forbidden.passed is True
+    # The gate verdict on the tolerant tier ignores soft_failures.
+    assert result.passed is True
+
+
 # =============================================================================
 # Snapshot tier
 # =============================================================================

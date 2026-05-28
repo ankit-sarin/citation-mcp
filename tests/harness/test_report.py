@@ -11,6 +11,7 @@ from tests.fixtures.comparator import (
     HardFieldResult,
     HardTierResult,
     SnapshotTierResult,
+    SoftFailuresResult,
     TolerantTierResult,
 )
 
@@ -138,11 +139,17 @@ def test_overall_fail_when_hard_tier_fails():
     assert "**Hard tier:** FAIL" in text
 
 
-def test_overall_fail_when_cold_latency_exceeds_gate():
-    # Gate is 20.0s after Phase 1.E.2.F.2. Use 21.0s to exceed it.
-    text = build_report(_make_inputs(_all_pass_rows(), cold_wall=21.0))
-    assert "**v1.0 gate:** FAIL" in text
-    assert re.search(r"\*\*Cold-cache latency:\*\* 21\.00s — FAIL", text)
+def test_high_latency_does_not_fail_gate():
+    """Phase 1.E.2.F.3: latency is informational, not a gate criterion.
+    A 27s cold pass must still produce v1.0 gate PASS so transient
+    upstream-DB slowdowns don't fire false-alarm digests."""
+    text = build_report(_make_inputs(_all_pass_rows(), cold_wall=27.0))
+    assert "**v1.0 gate:** PASS" in text
+    # Latency line is informational (italic) — no "FAIL", no "gate:" threshold.
+    assert "27.00s" in text
+    assert "informational" in text
+    assert "FAIL" not in text.split("## Latency", 1)[0]  # no FAIL in Overall section
+    assert "gate: <" not in text  # no threshold framing
 
 
 def test_needs_attention_lists_hard_failures():
@@ -182,6 +189,39 @@ def test_needs_attention_lists_snapshot_informational():
     assert "score_breakdown.title_sim" in attn
     # Gate must still be PASS — snapshot non-NONE is informational only.
     assert "**v1.0 gate:** PASS" in text
+
+
+def test_soft_failure_does_not_fail_gate():
+    """Phase 1.E.2.F.3: upstream-DB unavailability is informational only.
+    A row with a disallowed databases_failed entry must still produce
+    v1.0 gate PASS, and the failure must appear in the informational
+    upstream-availability subsection of Needs attention."""
+    rows = _all_pass_rows(2)
+    soft_fail_tolerant = TolerantTierResult(
+        soft_failures=SoftFailuresResult(
+            allowed=["arxiv"],
+            actual_failures=["semantic_scholar"],
+            disallowed=["semantic_scholar"],
+            passed=False,
+        )
+    )
+    rows.append(
+        _row(
+            "row_009",
+            _hard_pass("match_found"),
+            soft_fail_tolerant,
+            _snapshot_none(),
+        )
+    )
+    text = build_report(_make_inputs(rows))
+    # Gate must still be PASS — soft_failures is no longer gate-relevant.
+    assert "**v1.0 gate:** PASS" in text
+    # Informational subsection must appear in Needs attention.
+    attn = text.split("## Needs attention", 1)[1]
+    assert "Upstream database availability" in attn
+    assert "informational" in attn
+    assert "semantic_scholar" in attn
+    assert "row_009" in attn
 
 
 def test_cache_hit_anomaly_reported():

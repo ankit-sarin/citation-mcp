@@ -130,11 +130,14 @@ async def run_validation(
     report_path = write_report(inputs, output_dir)
 
     both_passes_ran = cold_outcome is not None and warm_outcome is not None
+    # v1.0 gate measures connector-controlled correctness only. Cold-cache
+    # latency and upstream-DB availability are reported but do NOT gate —
+    # they're sensitive to transient upstream-DB conditions outside the
+    # connector's control. See Phase 1.E.2.F.3 recalibration.
     gate_passed = (
         both_passes_ran
         and comparison.all_passed_hard
         and comparison.all_passed_tolerant
-        and inputs.cold_wall_clock_seconds < inputs.cold_latency_gate_seconds
     )
     return report_path, gate_passed
 

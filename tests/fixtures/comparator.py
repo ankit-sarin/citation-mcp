@@ -189,17 +189,20 @@ class TolerantTierResult:
 
     @property
     def passed(self) -> bool:
-        results = [
+        # Gate-relevant tolerant checks: citation_count band + discrepancies.
+        # soft_failures (databases_failed vs allowed_soft_failures) is upstream
+        # availability, not connector correctness — computed and reported, but
+        # NOT gating. A transient single-DB failure must not fail the gate.
+        gate_results = [
             r
             for r in (
                 self.citation_count,
                 self.discrepancies_required,
                 self.discrepancies_forbidden,
-                self.soft_failures,
             )
             if r is not None
         ]
-        return all(r.passed for r in results)
+        return all(r.passed for r in gate_results)
 
 
 @dataclass

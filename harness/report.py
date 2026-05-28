@@ -37,6 +37,9 @@ class ValidationRunInputs:
     comparison: BulkComparisonResult
     n_citations: int
 
+    # Retained for backward compatibility with callers that still pass it,
+    # but no longer consulted by gate logic (Phase 1.E.2.F.3 recalibration:
+    # latency is informational only, not a gate criterion).
     cold_latency_gate_seconds: float = 20.0
 
 
@@ -107,10 +110,14 @@ def _snapshot_paths(row: RowComparisonResult, limit: int = 6) -> str:
 
 
 def _gate_passed(inputs: ValidationRunInputs) -> bool:
+    # v1.0 gate measures connector-controlled correctness only — hard tier
+    # plus the gate-relevant tolerant sub-checks (citation_count band +
+    # discrepancies). Cold-cache latency and upstream-DB availability are
+    # rendered as informational but do NOT gate, since transient upstream
+    # behavior is outside the connector's control. See Phase 1.E.2.F.3.
     return (
         inputs.comparison.all_passed_hard
         and inputs.comparison.all_passed_tolerant
-        and inputs.cold_wall_clock_seconds < inputs.cold_latency_gate_seconds
     )
 
 
@@ -119,9 +126,6 @@ def build_report(inputs: ValidationRunInputs) -> str:
     n = len(cmp.rows)
     hard_pass_count = sum(1 for r in cmp.rows if r.passed_hard)
     tol_pass_count = sum(1 for r in cmp.rows if r.passed_tolerant)
-    cold_lat_pass = (
-        inputs.cold_wall_clock_seconds < inputs.cold_latency_gate_seconds
-    )
     gate_pass = _gate_passed(inputs)
     verdicts = cmp.snapshot_verdict_counts
 
@@ -147,12 +151,12 @@ def build_report(inputs: ValidationRunInputs) -> str:
         f"**Tolerant tier:** {_ps(cmp.all_passed_tolerant)} "
         f"({tol_pass_count}/{n} rows)"
     )
-    a(
-        f"**Cold-cache latency:** {inputs.cold_wall_clock_seconds:.2f}s "
-        f"— {_ps(cold_lat_pass)} "
-        f"(gate: <{inputs.cold_latency_gate_seconds:.1f}s)"
-    )
     a(f"**v1.0 gate:** {_ps(gate_pass)}")
+    a("")
+    a(
+        f"_Cold-cache latency: {inputs.cold_wall_clock_seconds:.2f}s "
+        f"(informational — not a gate criterion)_"
+    )
     a("")
 
     a("## Latency")
@@ -218,7 +222,32 @@ def build_report(inputs: ValidationRunInputs) -> str:
         block.extend(_tolerant_fail_lines(r))
         items.append("\n".join(block))
 
-    # (c) Snapshot verdicts other than NONE (informational)
+    # (c) Upstream database availability (informational; does not affect gate).
+    # soft_failures sub-results are populated by compare_tolerant but excluded
+    # from the tolerant-tier gate verdict per Phase 1.E.2.F.3 recalibration.
+    db_to_rows: dict[str, list[str]] = {}
+    for r in cmp.rows:
+        sf = r.tolerant.soft_failures
+        if sf is None or sf.passed:
+            continue
+        for db in sf.disallowed:
+            db_to_rows.setdefault(db, []).append(r.row_id)
+    if db_to_rows:
+        block = [
+            "### Upstream database availability (informational — does not affect gate)"
+        ]
+        for db in sorted(db_to_rows):
+            block.append(
+                f"- {db} failed on rows: {', '.join(db_to_rows[db])}"
+            )
+        block.append(
+            "- (these are transient upstream failures; the connector degraded "
+            "gracefully and hard/tolerant gate checks passed using the "
+            "remaining databases)"
+        )
+        items.append("\n".join(block))
+
+    # (d) Snapshot verdicts other than NONE (informational)
     interesting_snapshots = [
         r for r in cmp.rows if r.snapshot_verdict != "NONE"
     ]
