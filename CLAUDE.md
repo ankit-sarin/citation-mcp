@@ -296,10 +296,15 @@ explicit deployment spec, not as part of a code change.
     (`match_found`, `doi_resolved`, `pmid_resolved`, `arxiv_id_resolved`,
     `first_author_surname`, `year`, `match_quality`, `confidence` on
     matched rows; `match_found` + `rejected_by` on adversarial rows).
-  - `expected.tolerant` — citation_count value with ±20% tolerance band,
-    required and forbidden discrepancy entries keyed on (rule, field),
-    and `allowed_soft_failures` (e.g. `["arxiv"]` for arXiv-opt-in
-    rows where 429s shouldn't fail the row).
+  - `expected.tolerant` — citation_count baseline value (gated by a
+    structural anomaly guard: `stub_null` / `stub_zero`, plus an opt-in
+    10× tripwire via `CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD`; no
+    longitudinal band — organic drift surfaces via the snapshot
+    UNEXPECTED mechanism on `canonical.citation_count.*` paths).
+    `tolerance_pct` is retained in the fixture for back-compat but no
+    longer enforced. Plus required and forbidden discrepancy entries
+    keyed on `(rule, field)`, and `allowed_soft_failures` (e.g.
+    `["arxiv"]` for arXiv-opt-in rows where 429s shouldn't fail the row).
   - `expected.snapshot` — full raw response object for delta-style
     regression review when a future code change moves the baseline.
 - **Loader at `tests/fixtures/loader.py`** — `load_regression_30()` reads
