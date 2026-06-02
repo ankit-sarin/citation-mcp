@@ -8,7 +8,7 @@ distribution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from tests.fixtures.comparator import (
     HardTierResult,
@@ -25,6 +25,10 @@ class RowComparisonResult:
     hard: HardTierResult
     tolerant: TolerantTierResult
     snapshot: SnapshotTierResult
+    # Raw per-row response from bulkVerifyCitations. Plumbed through so the
+    # report writer can persist actual values alongside the markdown report
+    # — failing-row triage shouldn't require re-running the harness.
+    actual: dict = field(default_factory=dict)
 
     @property
     def passed_hard(self) -> bool:
@@ -91,6 +95,7 @@ def run_comparison(
                 hard=tier.hard,
                 tolerant=tier.tolerant,
                 snapshot=tier.snapshot,
+                actual=actual,
             )
         )
     return BulkComparisonResult(rows=rows)

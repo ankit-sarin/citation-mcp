@@ -26,6 +26,16 @@ from typing import Any, Optional
 _MISSING = object()
 
 
+# Optional order-of-magnitude tripwire on citation_count. Default OFF. When
+# enabled, gates a row if actual >= 10*baseline or actual*10 <= baseline.
+# Trade-off: catches gross wrong-record matches (e.g. resolver collapses to a
+# stale stub or a famous paper); will not fire on organic citation growth
+# within an order of magnitude across years. Drift below this threshold is
+# informational only — see the snapshot UNEXPECTED verdict on
+# canonical.citation_count paths.
+CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD = False
+
+
 # ---------------------------------------------------------------------------
 # Snapshot classifier — copied verbatim from
 # scripts/regression_30/regenerate_v0_3_5.py (Phase v0.3.5.F.1). Renamed
@@ -154,6 +164,11 @@ class CitationCountResult:
     tolerance_pct: int
     delta_pct: Optional[float]
     passed: bool
+    # Structural anomaly that gated this row, or None if no anomaly. The
+    # ±tolerance_pct band is no longer gating — see
+    # CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD. delta_pct is retained as
+    # informational telemetry.
+    anomaly: Optional[str] = None
 
 
 @dataclass
@@ -189,10 +204,14 @@ class TolerantTierResult:
 
     @property
     def passed(self) -> bool:
-        # Gate-relevant tolerant checks: citation_count band + discrepancies.
-        # soft_failures (databases_failed vs allowed_soft_failures) is upstream
-        # availability, not connector correctness — computed and reported, but
-        # NOT gating. A transient single-DB failure must not fail the gate.
+        # Gate-relevant tolerant checks: citation_count structural guard
+        # (stub-null / stub-zero, plus optional 10× tripwire when enabled)
+        # and the two discrepancy checks. The longitudinal ±tolerance_pct
+        # band on citation_count is no longer gating — organic upstream
+        # drift surfaces via the snapshot UNEXPECTED mechanism instead.
+        # soft_failures (databases_failed vs allowed_soft_failures) is
+        # upstream availability, not connector correctness — computed and
+        # reported, but NOT gating.
         gate_results = [
             r
             for r in (
@@ -296,47 +315,51 @@ def compare_tolerant(
 
     if "citation_count" in expected_tolerant:
         spec = expected_tolerant["citation_count"]
-        exp_value = spec["value"]
+        baseline = spec["value"]
         tol_pct = spec["tolerance_pct"]
         raw_actual = actual.get("canonical", {}).get("citation_count")
         # canonical.citation_count in live bulk responses is a per-source
         # dict (e.g., {"openalex": 20, "semantic_scholar": 21}), not a
-        # single int. Aggregate to one int via max() for the tolerant-tier
-        # band comparison. max() is the empirically-aligned aggregation:
-        # robust to missing sources, deterministic across dict orderings,
-        # and matches the fixture-builder's value on spot-checked rows.
-        # Defer per-source comparison to v0.4 if cross-source drift
-        # detection becomes valuable.
+        # single int. Aggregate via max() — robust to missing sources,
+        # deterministic across dict orderings, matches the fixture-builder
+        # on spot-checked rows.
         if isinstance(raw_actual, dict):
             valid_values = [v for v in raw_actual.values() if v is not None]
             actual_value = max(valid_values) if valid_values else None
         else:
             actual_value = raw_actual
-        if actual_value is None:
-            result.citation_count = CitationCountResult(
-                actual=None,
-                expected_value=exp_value,
-                tolerance_pct=tol_pct,
-                delta_pct=None,
-                passed=False,
-            )
-        elif exp_value == 0:
-            result.citation_count = CitationCountResult(
-                actual=actual_value,
-                expected_value=0,
-                tolerance_pct=tol_pct,
-                delta_pct=None,
-                passed=(actual_value == 0),
-            )
+
+        # delta_pct is informational only. The ±tol_pct band is no longer
+        # gating; organic upstream citation_count drift is rendered via the
+        # snapshot UNEXPECTED mechanism (canonical.citation_count.*).
+        if actual_value is None or baseline == 0:
+            delta_pct = None
         else:
-            delta_pct = abs(actual_value - exp_value) / exp_value * 100
-            result.citation_count = CitationCountResult(
-                actual=actual_value,
-                expected_value=exp_value,
-                tolerance_pct=tol_pct,
-                delta_pct=delta_pct,
-                passed=(delta_pct <= tol_pct),
-            )
+            delta_pct = abs(actual_value - baseline) / baseline * 100
+
+        # Structural correctness guard — only stub-shaped anomalies gate.
+        anomaly: Optional[str] = None
+        if actual_value is None and isinstance(baseline, int) and baseline > 0:
+            anomaly = "stub_null"
+        elif actual_value == 0 and isinstance(baseline, int) and baseline > 0:
+            anomaly = "stub_zero"
+        elif (
+            CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD
+            and actual_value is not None
+            and isinstance(baseline, int)
+            and baseline > 0
+            and (actual_value >= 10 * baseline or actual_value * 10 <= baseline)
+        ):
+            anomaly = "order_of_magnitude"
+
+        result.citation_count = CitationCountResult(
+            actual=actual_value,
+            expected_value=baseline,
+            tolerance_pct=tol_pct,
+            delta_pct=delta_pct,
+            passed=(anomaly is None),
+            anomaly=anomaly,
+        )
 
     if "discrepancies_required" in expected_tolerant:
         required = expected_tolerant["discrepancies_required"]

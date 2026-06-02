@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,13 +75,10 @@ def _tolerant_fail_lines(row: RowComparisonResult) -> list[str]:
     lines: list[str] = []
     cc = row.tolerant.citation_count
     if cc is not None and not cc.passed:
-        delta = (
-            f"{cc.delta_pct:.2f}%" if cc.delta_pct is not None else "n/a"
-        )
+        anomaly = cc.anomaly or "unknown"
         lines.append(
-            f"- citation_count: actual={cc.actual}, "
-            f"expected_value={cc.expected_value} "
-            f"(tolerance ±{cc.tolerance_pct}%), delta_pct={delta}"
+            f"- citation_count anomaly `{anomaly}`: "
+            f"actual={cc.actual}, baseline={cc.expected_value}"
         )
     dr = row.tolerant.discrepancies_required
     if dr is not None and not dr.passed:
@@ -298,6 +296,59 @@ def _timestamp_compact(ts_iso: str) -> str:
     return dt.strftime("%Y%m%dT%H%M%SZ")
 
 
+def _json_default(obj):
+    if obj is _MISSING:
+        return "<missing>"
+    if is_dataclass(obj):
+        return asdict(obj)
+    if isinstance(obj, tuple):
+        return list(obj)
+    return repr(obj)
+
+
+def _row_to_raw_dict(row: RowComparisonResult) -> dict:
+    return {
+        "row_id": row.row_id,
+        "category": row.category,
+        "passed_hard": row.passed_hard,
+        "passed_tolerant": row.passed_tolerant,
+        "snapshot_verdict": row.snapshot_verdict,
+        "actual": row.actual,
+        "hard": asdict(row.hard),
+        "tolerant": asdict(row.tolerant),
+        "snapshot": asdict(row.snapshot),
+    }
+
+
+def write_raw_responses(
+    inputs: ValidationRunInputs, output_dir: Path
+) -> Path:
+    """Persist per-row actual responses + diff details alongside the markdown.
+
+    The markdown report only lists diff paths, not values — a failing-row
+    triage previously required re-running the harness to read the actual
+    response. This sidecar carries the full per-row payload so any future
+    failure can be diagnosed from disk alone. Gitignored via
+    `harness/reports/*`.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    name = f"report_{_timestamp_compact(inputs.timestamp_utc_iso)}.raw.json"
+    path = output_dir / name
+    payload = {
+        "timestamp_utc_iso": inputs.timestamp_utc_iso,
+        "fixture_version": inputs.fixture_version,
+        "server_url": inputs.server_url,
+        "n_citations": inputs.n_citations,
+        "rows": [_row_to_raw_dict(r) for r in inputs.comparison.rows],
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, default=_json_default, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
 def write_report(
     inputs: ValidationRunInputs, output_dir: Path
 ) -> Path:
@@ -307,4 +358,5 @@ def write_report(
     name = f"report_{_timestamp_compact(inputs.timestamp_utc_iso)}.md"
     path = output_dir / name
     path.write_text(body, encoding="utf-8")
+    write_raw_responses(inputs, output_dir)
     return path

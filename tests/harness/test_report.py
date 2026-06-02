@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from harness.comparator_runner import BulkComparisonResult, RowComparisonResult
-from harness.report import ValidationRunInputs, build_report
+from harness.report import ValidationRunInputs, build_report, write_report
 from tests.fixtures.comparator import (
     CitationCountResult,
     HardFieldResult,
@@ -39,14 +40,22 @@ def _tolerant_pass() -> TolerantTierResult:
     return TolerantTierResult()
 
 
-def _tolerant_cc_fail(actual: int, expected: int) -> TolerantTierResult:
+def _tolerant_cc_fail(actual, expected: int, anomaly: str = "stub_null") -> TolerantTierResult:
+    """Build a failing citation_count tolerant result under the structural
+    guard. Defaults to stub_null (the row_018-class anomaly is non-gating
+    by design — band drift no longer fails the tier)."""
+    delta_pct = (
+        abs(actual - expected) / expected * 100
+        if (actual is not None and expected) else None
+    )
     return TolerantTierResult(
         citation_count=CitationCountResult(
             actual=actual,
             expected_value=expected,
             tolerance_pct=20,
-            delta_pct=abs(actual - expected) / expected * 100,
+            delta_pct=delta_pct,
             passed=False,
+            anomaly=anomaly,
         )
     )
 
@@ -232,3 +241,47 @@ def test_cache_hit_anomaly_reported():
     assert "30" in attn
     # Soft warning — gate stays PASS.
     assert "**v1.0 gate:** PASS" in text
+
+
+def test_write_report_persists_raw_responses(tmp_path):
+    """write_report must emit a .raw.json sidecar carrying the per-row
+    actual responses. Triage of a failing row should not require re-running
+    the harness — the row_018 incident on 2026-06-01 had to infer actual
+    values from diff-paths alone because nothing on disk carried them."""
+    row = _row(
+        "row_018",
+        _hard_pass("match_found"),
+        _tolerant_pass(),
+        _snapshot("UNEXPECTED", ["canonical.citation_count.openalex"]),
+        category="title_only",
+    )
+    # Plumb actual into the row — this is the value that should survive
+    # to disk verbatim.
+    row.actual = {
+        "verified": True,
+        "canonical": {
+            "doi": "10.1007/s11548-024-03178-z",
+            "citation_count": {"openalex": 4, "semantic_scholar": 2},
+        },
+    }
+
+    inputs = _make_inputs([row])
+    md_path = write_report(inputs, tmp_path)
+
+    raw_path = md_path.with_name(md_path.stem + ".raw.json")
+    assert raw_path.exists(), f"raw sidecar missing at {raw_path}"
+
+    payload = json.loads(raw_path.read_text(encoding="utf-8"))
+    assert payload["fixture_version"] == "1.0"
+    assert len(payload["rows"]) == 1
+    persisted = payload["rows"][0]
+    assert persisted["row_id"] == "row_018"
+    # The actual values that previously had to be inferred:
+    assert persisted["actual"]["canonical"]["citation_count"]["openalex"] == 4
+    assert persisted["actual"]["canonical"]["citation_count"]["semantic_scholar"] == 2
+    # Snapshot diffs survive as well (path + old + new).
+    snap = persisted["snapshot"]
+    assert snap["verdict"] == "UNEXPECTED"
+    assert any(
+        d[0] == "canonical.citation_count.openalex" for d in snap["diffs"]
+    )

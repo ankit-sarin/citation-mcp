@@ -132,6 +132,14 @@ def test_hard_extractor_rejected_by_from_score_breakdown():
 
 # =============================================================================
 # Tolerant tier — citation_count
+#
+# The longitudinal ±tolerance_pct band is no longer gating (organic upstream
+# citation drift was firing false-alarm gate failures — see row_018 on
+# 2026-06-01). Gating reduced to structural anomalies: actual==null while
+# baseline was a positive count, or actual==0 while baseline was positive.
+# The order-of-magnitude tripwire is opt-in via
+# CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD. delta_pct is retained as
+# informational telemetry.
 # =============================================================================
 
 
@@ -140,70 +148,135 @@ def _tol(**kwargs):
     return kwargs
 
 
-def test_tolerant_citation_count_within_band():
+def test_tolerant_citation_count_within_band_passes():
     expected = _tol(citation_count={"value": 100, "tolerance_pct": 20})
     actual = {"canonical": {"citation_count": 110}}
     result = compare_tolerant(actual, expected)
     cc = result.citation_count
     assert isinstance(cc, CitationCountResult)
     assert cc.passed is True
+    assert cc.anomaly is None
     assert cc.actual == 110
     assert cc.delta_pct == 10.0
     assert result.passed is True
 
 
-def test_tolerant_citation_count_at_upper_boundary():
+def test_tolerant_citation_count_low_count_plus_one_does_not_gate():
+    """row_018 regression: baseline 3, actual 4 → 33% delta but not a stub.
+    Must pass under the structural guard. This is the case that fired the
+    false-alarm gate failure on 2026-06-01."""
+    expected = _tol(citation_count={"value": 3, "tolerance_pct": 20})
+    actual = {"canonical": {"citation_count": 4}}
+    result = compare_tolerant(actual, expected)
+    cc = result.citation_count
+    assert cc.passed is True
+    assert cc.anomaly is None
+    assert cc.actual == 4
+    assert cc.delta_pct is not None and abs(cc.delta_pct - 33.33) < 0.01
+
+
+def test_tolerant_citation_count_far_above_band_still_passes():
+    """A 100→200 drift used to fail the band. Under the structural guard it
+    passes — not null, not zero, and below the (disabled-by-default) 10×
+    tripwire."""
     expected = _tol(citation_count={"value": 100, "tolerance_pct": 20})
-    actual = {"canonical": {"citation_count": 120}}
+    actual = {"canonical": {"citation_count": 200}}
     result = compare_tolerant(actual, expected)
     assert result.citation_count.passed is True
-    assert result.citation_count.delta_pct == 20.0
+    assert result.citation_count.anomaly is None
+    assert result.citation_count.delta_pct == 100.0
 
 
-def test_tolerant_citation_count_just_outside_band():
-    expected = _tol(citation_count={"value": 100, "tolerance_pct": 20})
-    actual = {"canonical": {"citation_count": 121}}
-    result = compare_tolerant(actual, expected)
-    assert result.citation_count.passed is False
-    assert result.citation_count.delta_pct == 21.0
-
-
-def test_tolerant_citation_count_below_band():
+def test_tolerant_citation_count_far_below_band_still_passes():
+    """A 100→70 drift used to fail the band. Under the structural guard it
+    passes — not null, not zero."""
     expected = _tol(citation_count={"value": 100, "tolerance_pct": 20})
     actual = {"canonical": {"citation_count": 70}}
     result = compare_tolerant(actual, expected)
-    assert result.citation_count.passed is False
+    assert result.citation_count.passed is True
+    assert result.citation_count.anomaly is None
     assert result.citation_count.delta_pct == 30.0
 
 
-def test_tolerant_citation_count_zero_expected_exact_match():
+def test_tolerant_citation_count_zero_baseline_zero_actual_passes():
     expected = _tol(citation_count={"value": 0, "tolerance_pct": 20})
-
-    # Case 1: actual==0 → exact match passes, delta is None (no division).
-    actual_zero = {"canonical": {"citation_count": 0}}
-    r1 = compare_tolerant(actual_zero, expected)
-    assert r1.citation_count.passed is True
-    assert r1.citation_count.delta_pct is None
-
-    # Case 2: actual==5 with expected==0 → fails, delta_pct still None.
-    actual_five = {"canonical": {"citation_count": 5}}
-    r2 = compare_tolerant(actual_five, expected)
-    assert r2.citation_count.passed is False
-    assert r2.citation_count.delta_pct is None
+    actual = {"canonical": {"citation_count": 0}}
+    result = compare_tolerant(actual, expected)
+    assert result.citation_count.passed is True
+    assert result.citation_count.anomaly is None
+    assert result.citation_count.delta_pct is None
 
 
-def test_tolerant_citation_count_missing_in_actual():
+def test_tolerant_citation_count_zero_baseline_positive_actual_passes():
+    """baseline=0 + actual=5 → organic citation growth from an uncited paper.
+    Not a stub (the structural rule keys on baseline>0). Passes."""
+    expected = _tol(citation_count={"value": 0, "tolerance_pct": 20})
+    actual = {"canonical": {"citation_count": 5}}
+    result = compare_tolerant(actual, expected)
+    assert result.citation_count.passed is True
+    assert result.citation_count.anomaly is None
+
+
+def test_tolerant_citation_count_stub_null_gates():
+    """actual==null while baseline was positive → resolver returned a stub."""
     expected = _tol(citation_count={"value": 100, "tolerance_pct": 20})
     actual = {"canonical": {}}
     result = compare_tolerant(actual, expected)
     assert result.citation_count.passed is False
+    assert result.citation_count.anomaly == "stub_null"
     assert result.citation_count.actual is None
     assert result.citation_count.delta_pct is None
 
 
+def test_tolerant_citation_count_stub_zero_gates():
+    """actual==0 while baseline was positive → resolver returned a stub."""
+    expected = _tol(citation_count={"value": 3, "tolerance_pct": 20})
+    actual = {"canonical": {"citation_count": 0}}
+    result = compare_tolerant(actual, expected)
+    assert result.citation_count.passed is False
+    assert result.citation_count.anomaly == "stub_zero"
+    assert result.citation_count.actual == 0
+
+
+def test_tolerant_citation_count_order_of_magnitude_off_by_default():
+    """CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD defaults to False — even a
+    1000× divergence passes the structural guard. Forces a deliberate
+    opt-in for the tripwire."""
+    assert comparator.CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD is False
+    expected = _tol(citation_count={"value": 3, "tolerance_pct": 20})
+    actual = {"canonical": {"citation_count": 3000}}
+    result = compare_tolerant(actual, expected)
+    assert result.citation_count.passed is True
+    assert result.citation_count.anomaly is None
+
+
+def test_tolerant_citation_count_order_of_magnitude_fires_when_enabled(monkeypatch):
+    """When the flag is enabled, actual ≥ 10×baseline gates."""
+    monkeypatch.setattr(
+        comparator, "CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD", True
+    )
+
+    # Exactly 10× → fires (≥ is inclusive).
+    expected = _tol(citation_count={"value": 3, "tolerance_pct": 20})
+    r_high = compare_tolerant({"canonical": {"citation_count": 30}}, expected)
+    assert r_high.citation_count.passed is False
+    assert r_high.citation_count.anomaly == "order_of_magnitude"
+
+    # Exactly 1/10× → fires.
+    expected_hi = _tol(citation_count={"value": 30, "tolerance_pct": 20})
+    r_low = compare_tolerant({"canonical": {"citation_count": 3}}, expected_hi)
+    assert r_low.citation_count.passed is False
+    assert r_low.citation_count.anomaly == "order_of_magnitude"
+
+    # Just under 10× → does NOT fire (29 < 3×10).
+    r_under = compare_tolerant({"canonical": {"citation_count": 29}}, expected)
+    assert r_under.citation_count.passed is True
+    assert r_under.citation_count.anomaly is None
+
+
 def test_tolerant_citation_count_dict_actual_uses_max():
     """Live responses return canonical.citation_count as a per-source dict.
-    Comparator must aggregate via max() before band comparison."""
+    Comparator must aggregate via max() before evaluation."""
     expected = {"citation_count": {"value": 21, "tolerance_pct": 20}}
     actual = {"canonical": {"citation_count": {"openalex": 20, "semantic_scholar": 21}}}
     result = compare_tolerant(actual, expected)
@@ -213,27 +286,24 @@ def test_tolerant_citation_count_dict_actual_uses_max():
     assert result.citation_count.delta_pct == 0.0
 
 
-def test_tolerant_citation_count_empty_dict_actual():
-    """Defensive: empty dict for citation_count is treated as no value present."""
+def test_tolerant_citation_count_empty_dict_actual_gates():
+    """Empty dict for citation_count → no value present → stub_null gate."""
     expected = {"citation_count": {"value": 21, "tolerance_pct": 20}}
     actual = {"canonical": {"citation_count": {}}}
     result = compare_tolerant(actual, expected)
-    assert result.citation_count is not None
     assert result.citation_count.passed is False
+    assert result.citation_count.anomaly == "stub_null"
     assert result.citation_count.actual is None
-    assert result.citation_count.delta_pct is None
 
 
-def test_tolerant_citation_count_dict_all_none_values():
-    """Defensive: dict with all-None values (e.g., all sources failed)
-    is treated as no value present."""
+def test_tolerant_citation_count_dict_all_none_values_gates():
+    """All-None per-source values (e.g., all sources failed) → stub_null."""
     expected = {"citation_count": {"value": 21, "tolerance_pct": 20}}
     actual = {"canonical": {"citation_count": {"openalex": None, "semantic_scholar": None}}}
     result = compare_tolerant(actual, expected)
-    assert result.citation_count is not None
     assert result.citation_count.passed is False
+    assert result.citation_count.anomaly == "stub_null"
     assert result.citation_count.actual is None
-    assert result.citation_count.delta_pct is None
 
 
 # =============================================================================
@@ -347,7 +417,7 @@ def test_tolerant_soft_failure_does_not_affect_gate_verdict():
         allowed_soft_failures=["arxiv"],
     )
     actual = {
-        "canonical": {"citation_count": 105},     # within band
+        "canonical": {"citation_count": 105},     # not a stub
         "discrepancies": [],                       # required empty, forbidden absent
         "databases_failed": ["semantic_scholar"],  # disallowed → soft_failures.passed=False
     }
