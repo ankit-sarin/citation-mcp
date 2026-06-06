@@ -103,7 +103,11 @@ def _validate(fixture: dict[str, Any]) -> None:
             _fail(6, f"row_030 Path A: rejected_by={r030_hard.get('rejected_by')!r} not in allowed set")
     elif mf is True:
         # Path B: match_quality must be 'low' or 'medium' (Phase 2.E.3 accepted medium).
-        mq = r030_hard.get("match_quality")
+        # Sourced from expected.snapshot (informational) rather than expected.hard:
+        # match_quality was demoted out of row_030's gated hard set after Crossref
+        # reshuffled the row onto a third Tukra-chapter edition (edition-drift
+        # demotion). The structural low/medium invariant is preserved here.
+        mq = r030["expected"]["snapshot"].get("match_quality")
         if mq not in {"low", "medium"}:
             _fail(6, f"row_030 Path B: match_quality={mq!r}, expected 'low' or 'medium'")
     else:

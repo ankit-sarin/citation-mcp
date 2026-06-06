@@ -5873,13 +5873,9 @@
       "expected": {
         "hard": {
           "match_found": true,
-          "match_quality": "low",
-          "confidence": 0.7092,
-          "doi_resolved": "10.1007/978-3-030-58080-3_323-1",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
           "first_author_surname": "Tukra",
-          "year": 2021
+          "pmid_resolved": null,
+          "arxiv_id_resolved": null
         },
         "tolerant": {
           "discrepancies_required": [],
@@ -5889,7 +5885,7 @@
         "snapshot": {
           "verified": true,
           "confidence": 0.7092,
-          "match_quality": "low",
+          "match_quality": "medium",
           "databases_confirmed": [
             "crossref"
           ],
