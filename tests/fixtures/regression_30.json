@@ -2744,11 +2744,9 @@
           "match_found": true,
           "doi_resolved": "10.1109/icra55743.2025.11128739",
           "pmid_resolved": null,
-          "arxiv_id_resolved": "2409.14287",
           "match_quality": "medium",
           "confidence": 1.0,
-          "first_author_surname": "Liang",
-          "year": 2024
+          "first_author_surname": "Liang"
         },
         "tolerant": {
           "citation_count": {
@@ -5632,8 +5630,7 @@
           "arxiv_id_resolved": "1512.03385",
           "match_quality": "high",
           "confidence": 1.0,
-          "first_author_surname": "He",
-          "year": 2015
+          "first_author_surname": "He"
         },
         "tolerant": {
           "citation_count": {

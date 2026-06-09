@@ -44,6 +44,15 @@ ROW_029_ALLOWED_REJECTED_BY = {
     "title_similarity_below_floor",
 }
 
+# Rows whose mandatory non-null `year` assertion (Rule 7) reads
+# `expected.snapshot.canonical.year` instead of `expected.hard["year"]`.
+# These rows carry the earliest-year preprint/publication duality trap
+# (preprint year vs later conference-proceedings DOI year), so `year` was
+# de-gated out of `expected.hard` and the all-DBs-up baseline left in the
+# snapshot — edition/availability flips surface as non-gating snapshot diffs.
+# Same relocation idiom as row_030 Path B's `match_quality`, but as a set.
+YEAR_FROM_SNAPSHOT_ROWS = {"row_016", "row_028"}
+
 
 class FixtureValidationError(Exception):
     """Raised when the regression fixture fails one or more validation rules."""
@@ -128,7 +137,13 @@ def _validate(fixture: dict[str, Any]) -> None:
             _fail(7, f"{rid}: match_found={h.get('match_found')!r}, expected true")
         if not h.get("first_author_surname"):
             _fail(7, f"{rid}: first_author_surname empty")
-        if h.get("year") is None:
+        if rid in YEAR_FROM_SNAPSHOT_ROWS:
+            # Year de-gated out of expected.hard; read the baseline from the
+            # snapshot's canonical record instead (relocation idiom, row_030 Path B).
+            snap_year = r["expected"]["snapshot"].get("canonical", {}).get("year")
+            if snap_year is None:
+                _fail(7, f"{rid}: snapshot canonical.year is null")
+        elif h.get("year") is None:
             _fail(7, f"{rid}: year is null")
         if h.get("match_quality") is None:
             _fail(7, f"{rid}: match_quality is null")
