@@ -2901,7 +2901,6 @@
           "match_found": true,
           "doi_resolved": "10.1126/scirobotics.adt5254",
           "pmid_resolved": "40632876",
-          "arxiv_id_resolved": "2505.10251",
           "match_quality": "medium",
           "confidence": 1.0,
           "first_author_surname": "Kim",
@@ -5627,7 +5626,6 @@
           "match_found": true,
           "doi_resolved": "10.1109/cvpr.2016.90",
           "pmid_resolved": null,
-          "arxiv_id_resolved": "1512.03385",
           "match_quality": "high",
           "confidence": 1.0,
           "first_author_surname": "He"
