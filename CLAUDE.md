@@ -138,8 +138,13 @@ on the DGX; logs via `journalctl -u citation-mcp -f`.
 uv run pytest -v
 ```
 
-Current count: **228 passing** (226 unit/integration + 2 fixture-validation
-in `tests/test_regression_30_fixture.py`).
+Current count: **311 passing + 2 skipped**. The passing set is
+unit/integration + fixture-validation in `tests/test_regression_30_fixture.py`
++ the 7 deterministic `canonical.arxiv_id` authority/redundancy invariants in
+`tests/test_arxiv_id_authority.py`. The 2 skipped are live upstream-contract
+checks in `tests/test_arxiv_id_authority_live.py` that run only under
+`CITATION_MCP_LIVE=1` (and `pytest.skip` — never fail — when Semantic Scholar
+is rate-limited/unavailable).
 
 Live integration tests are gated behind `CITATION_MCP_LIVE=1`:
 
@@ -296,6 +301,12 @@ explicit deployment spec, not as part of a code change.
     (`match_found`, `doi_resolved`, `pmid_resolved`, `arxiv_id_resolved`,
     `first_author_surname`, `year`, `match_quality`, `confidence` on
     matched rows; `match_found` + `rejected_by` on adversarial rows).
+    **The hard gating set is per-row and data-driven: a field gates iff
+    it is a key in that row's `expected.hard` block.** A volatile field is
+    de-gated simply by removing its key from `hard` and leaving the
+    baseline in `expected.snapshot` (where drift surfaces as a non-gating
+    snapshot diff). See "Per-row hard-tier gate scoping" below for the
+    rows where edition- or availability-volatile fields have been removed.
   - `expected.tolerant` — citation_count baseline value (gated by a
     structural anomaly guard: `stub_null` / `stub_zero`, plus an opt-in
     10× tripwire via `CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD`; no
@@ -349,6 +360,38 @@ explicit deployment spec, not as part of a code change.
   `year_off_by_more_than_one` — title-only inputs with null-year DB
   candidates skip the year guard and fall through to title-sim
   (see Phase 2.D Finding 2 in `data/regression_30_baseline/summary.md`).
+
+### Per-row hard-tier gate scoping (edition / availability invariance)
+
+Some baseline values are not connector-correctness properties but artifacts
+of upstream edition reshuffles or transient single-DB availability. Gating on
+them produces false failures, so those specific keys were removed from the
+affected rows' `expected.hard` (baseline preserved in `expected.snapshot` so
+the drift still surfaces non-gating):
+
+- **row_030 (adversarial)** — gate scoped to edition-invariant fields only
+  (`match_found`, `first_author_surname`, `pmid_resolved: null`,
+  `arxiv_id_resolved: null`); `match_quality` reads from `expected.snapshot`
+  (Crossref re-ranks the Tukra book-chapter editions). Commit `063ab14`.
+- **row_016 / row_028 (`year`)** — both carry the earliest-year
+  preprint/publication duality trap (preprint year vs later conference-
+  proceedings DOI year; Layer 3 selects earliest). `year` de-gated from
+  `hard`; the loader's **Rule 7** mandatory-non-null-year assertion reads
+  `expected.snapshot.canonical.year` for the named set
+  `YEAR_FROM_SNAPSHOT_ROWS = {"row_016", "row_028"}` instead. Commit `d4b766c`.
+- **row_016 / row_017 / row_028 (`arxiv_id_resolved`)** — de-gated where the
+  field is upstream-availability-dependent. row_016 was observed dropping to
+  `None` on 2026-06-08 when Semantic Scholar fell; row_016/017 are title-only,
+  so arXiv is not queried and **SS is the sole carrier** of `arxiv_id`. row_028
+  has arXiv+SS redundancy but its baseline year/edition is volatile.
+  **row_027 keeps `arxiv_id_resolved` gated** — it is echo-backed (explicit
+  arxiv input surfaces via `_empty_canonical_from_input` even on total match
+  loss) and never flips. Commit `d7b787e`. The authority/redundancy logic
+  behind these decisions is locked in by `tests/test_arxiv_id_authority.py`
+  (deterministic) + `tests/test_arxiv_id_authority_live.py` (opt-in live
+  contract): `canonical.arxiv_id` is fed only by the `[arxiv,
+  semantic_scholar]` authority list (scoring.py `_AUTHORITY`); arXiv is queried
+  only on explicit `arxiv_id` input (server.py).
 
 ## Phase 1.D.1 / 1.D.4 known limitations (1.D.2 backlog)
 

@@ -10,6 +10,38 @@ tagged release (SDK host-check disable, commit `b9c50aa`) shipped without
 a corresponding source-pin bump. v0.3.3 brings the pin in sync with the
 tag history.
 
+## [Unreleased]
+
+### Changed
+
+- Regression fixture `tests/fixtures/regression_30.json` — per-row hard-tier
+  gate scoping for edition/availability-volatile fields (baselines preserved
+  in `expected.snapshot`; drift now surfaces as non-gating snapshot diffs
+  instead of false gate failures):
+  - **row_030**: gate scoped to edition-invariant fields only (Crossref
+    re-ranks the Tukra book-chapter editions).
+  - **row_016 / row_028**: `year` de-gated (earliest-year preprint/publication
+    duality trap). The loader's Rule 7 mandatory-non-null-`year` assertion now
+    reads `expected.snapshot.canonical.year` for the named set
+    `{"row_016", "row_028"}`.
+  - **row_016 / row_017 / row_028**: `arxiv_id_resolved` de-gated where it is
+    upstream-availability-dependent (title-only rows have Semantic Scholar as
+    the sole carrier; row_016 was observed dropping to `None` on 2026-06-08
+    during an SS outage). **row_027 keeps `arxiv_id_resolved` gated** — it is
+    echo-backed and never flips.
+
+### Tests
+
+- `tests/test_arxiv_id_authority.py` — 7 deterministic invariants guarding the
+  `canonical.arxiv_id` authority list (`[arxiv, semantic_scholar]` only) and
+  the title-only-sole-carrier / explicit-arxiv-echo / arXiv+SS-redundancy
+  behaviors. No network/auth.
+- `tests/test_arxiv_id_authority_live.py` — opt-in live upstream-contract check
+  (gated behind `CITATION_MCP_LIVE=1`; `pytest.skip` on SS rate-limit, never
+  flakes).
+- `tests/test_regression_30_fixture.py` — extended to assert the Rule 7
+  `year`-from-snapshot relocation for the named set.
+
 ## [1.0.0] — 2026-05-28
 
 First stable release. The deployed connector is validated end-to-end
