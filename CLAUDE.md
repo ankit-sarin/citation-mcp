@@ -138,11 +138,14 @@ on the DGX; logs via `journalctl -u citation-mcp -f`.
 uv run pytest -v
 ```
 
-Current count: **311 passing + 2 skipped**. The passing set is
+Current count: **339 passing + 2 skipped**. The passing set is
 unit/integration + fixture-validation in `tests/test_regression_30_fixture.py`
 + the 7 deterministic `canonical.arxiv_id` authority/redundancy invariants in
-`tests/test_arxiv_id_authority.py`. The 2 skipped are live upstream-contract
-checks in `tests/test_arxiv_id_authority_live.py` that run only under
+`tests/test_arxiv_id_authority.py` + the Phase GATE-OPT1 mocked correctness
+suite (`tests/test_gate_opt1_correctness.py`, T1–T6) and offline-replay
+acceptance checks (`tests/harness/test_replay.py`, skip when their gitignored
+sidecars are absent). The 2 skipped are live upstream-contract checks in
+`tests/test_arxiv_id_authority_live.py` that run only under
 `CITATION_MCP_LIVE=1` (and `pytest.skip` — never fail — when Semantic Scholar
 is rate-limited/unavailable).
 
@@ -393,6 +396,68 @@ the drift still surfaces non-gating):
   semantic_scholar]` authority list (scoring.py `_AUTHORITY`); arXiv is queried
   only on explicit `arxiv_id` input (server.py).
 
+### Phase GATE-OPT1 — nightly gate reduced to connector-invariant correctness
+
+Three consecutive nightly hard-gate FAILs (06-05 row_030 Crossref edition
+re-rank; 06-08 row_016/028 earliest-year duality + arxiv_id carrier; 06-12
+OpenAlex 13× ReadTimeout → row_010 confidence, row_013 sole-carrier
+match_found collapse, row_014 carrier-displaced author/year, plus row_015
+Crossref `.c1` correction re-rank) all occurred with `src/` byte-identical to
+`bae3ac9`. Root cause: the hard gate asserted values/decisions that are a
+function of *which DBs answered and how each currently indexes the work*.
+
+**GATE-OPT1 removes every upstream-varying assertion from the live gate** and
+moves correctness to deterministic mocked tests. This **supersedes the per-row
+hard-tier gate scoping above** — that per-field, per-row de-gating is now
+subsumed by a uniform rule: every matched row's `expected.hard` is **empty**.
+
+The reduced hard-tier gate enforces ONLY:
+- **Plumbing** — OAuth PKCE + Cloudflare Tunnel + Streamable-HTTP bulk path.
+- **Structural validity** — `canonical.citation_count` is a per-source dict,
+  never a bare scalar (tolerant anomaly `not_per_source_dict`).
+- **citation_count stub guards** — `stub_null` / `stub_zero`, now **conditioned
+  on `verified=True`**: on a no-match response (e.g. a sole-carrier outage) a
+  null count is the correct echo, not a stub. This is the refinement that keeps
+  row_013's 06-12 collapse from gating.
+- **Discrepancy structural shape** — each emitted `discrepancies` entry carries
+  `rule`+`field`+`resolved_to`. The old frozen-baseline
+  `discrepancies_required`/`forbidden` set-membership is **demoted to
+  non-gating** (it shrank/grew with the live DB set); membership drift now
+  surfaces in the snapshot tier.
+- **Carrier-invariant NEGATIVES** — for no-match/fabrication rows, gate
+  `match_found=False` + null `doi`/`pmid`/`arxiv` (a real DB matching a
+  fabrication, or surfacing an identifier for one, is always a connector bug).
+  Only **row_029** is such a row; its negative was strengthened (it now gates
+  the null identifiers it previously omitted). row_029's `rejected_by` was
+  demoted (carrier-variant per Phase 2.D).
+- **120 s hang backstop**.
+
+Everything else DEMOTES to the non-gating snapshot tier: every POSITIVE
+value/decision — `year`, `doi`/`pmid`/`arxiv_id` resolved, `first_author_surname`,
+`journal`, `confidence`, `match_quality`, `match_found=True`, `citation_count`
+value.
+
+- **Loader** (`tests/fixtures/loader.py`): Rule 7/9 read completeness/quality
+  from `expected.snapshot` **uniformly** (the v12 `YEAR_FROM_SNAPSHOT_ROWS`
+  named-set stopgap is removed); Rule 6 reads adversarial baselines from
+  snapshot. **Rule 13** (the un-reintroducibility lever) RAISES if any
+  `expected.hard` re-arms a positive denylisted field — so re-introducing the
+  flaky gate fails in the test suite (`tests/test_regression_30_fixture.py`),
+  not at 2am. Denylist sets: `HARD_DENYLIST_ALWAYS`,
+  `HARD_DENYLIST_IDENTIFIERS` (non-null only) + `match_found=True`.
+- **Comparator** (`tests/fixtures/comparator.py`): `TolerantTierResult.passed`
+  gates on `citation_count` + `discrepancies_structural` only.
+- **Correctness** now lives in `tests/test_gate_opt1_correctness.py` (T1–T6,
+  mocked per-DB payloads incl. the row_013 OpenAlex-sole-carrier Cursi 2022
+  case the live gate gave up).
+- **Acceptance**: `python -m harness.replay <report_*.raw.json>` feeds a saved
+  nightly sidecar through the current comparator offline and prints the gate
+  verdict — the deterministic check for the reduction (06-12 FAIL-day → PASS,
+  06-09 clean → PASS). Commits `014df9d`, `b04c92d`, `4a05761`.
+- **Out of scope / follow-up**: OpenAlex was sole carrier for row_013 and timed
+  out 13× on 06-12 — read-timeout/retry tuning + prioritizing the pending
+  academic-access request is a coverage-quality (not gate-stability) follow-up.
+
 ## Phase 1.D.1 / 1.D.4 known limitations (1.D.2 backlog)
 
 - **Verifier failure reason is not logged.** `CitationMcpTokenVerifier`
@@ -493,3 +558,8 @@ the drift still surfaces non-gating):
   drift is absorbed automatically — no reconciliation needed when DB-side
   counts change. Only structural changes in the discrepancy generation
   (new rule types, removed fields) would invalidate these assertions.
+  **As of Phase GATE-OPT1 these `discrepancies_required`/`forbidden`
+  set-membership checks no longer GATE** — they are computed and reported,
+  but the tolerant gate is `citation_count` (structural guards) +
+  `discrepancies_structural` (well-formedness) only. See the GATE-OPT1
+  section above.
