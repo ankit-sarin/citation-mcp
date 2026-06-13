@@ -90,6 +90,11 @@ def _tolerant_fail_lines(row: RowComparisonResult) -> list[str]:
         lines.append(
             f"- discrepancies_forbidden present: {df.present}"
         )
+    ds = row.tolerant.discrepancies_structural
+    if ds is not None and not ds.passed:
+        lines.append(
+            f"- discrepancies malformed (structural gate): {ds.malformed}"
+        )
     sf = row.tolerant.soft_failures
     if sf is not None and not sf.passed:
         lines.append(
@@ -109,10 +114,11 @@ def _snapshot_paths(row: RowComparisonResult, limit: int = 6) -> str:
 
 def _gate_passed(inputs: ValidationRunInputs) -> bool:
     # v1.0 gate measures connector-controlled correctness only — hard tier
-    # plus the gate-relevant tolerant sub-checks (citation_count band +
-    # discrepancies). Cold-cache latency and upstream-DB availability are
-    # rendered as informational but do NOT gate, since transient upstream
-    # behavior is outside the connector's control. See Phase 1.E.2.F.3.
+    # plus the gate-relevant tolerant sub-checks (citation_count structural
+    # guards + discrepancy structural shape). Cold-cache latency, upstream-DB
+    # availability, and every upstream-varying value/decision are rendered as
+    # informational but do NOT gate, since they're outside the connector's
+    # control. See Phase 1.E.2.F.3 and Phase GATE-OPT1.
     return (
         inputs.comparison.all_passed_hard
         and inputs.comparison.all_passed_tolerant

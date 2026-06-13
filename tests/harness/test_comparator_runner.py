@@ -91,9 +91,10 @@ def test_one_row_fails_hard():
 
 def test_one_row_fails_tolerant():
     # Under the structural citation_count guard, only stub-shaped anomalies
-    # gate. row_001 returns a healthy count → passes; row_002 returns null
-    # (e.g., resolver fell back to a stub record) → gates as stub_null.
-    snap = _result(canonical={"citation_count": 100})
+    # gate. row_001 returns a healthy (matched) count → passes; row_002 is a
+    # matched row whose count collapsed to null (resolver stub) → stub_null.
+    # _result() defaults verified=True, so the stub guard is in scope.
+    snap = _result(canonical={"citation_count": {"openalex": 100}})
     fixture_rows = [
         _row(
             "row_001",
@@ -109,7 +110,7 @@ def test_one_row_fails_tolerant():
         ),
     ]
     payload = {"results": [
-        _result(canonical={"citation_count": 110}),   # healthy → pass
+        _result(canonical={"citation_count": {"openalex": 110}}),  # healthy → pass
         _result(canonical={}),                         # null citation_count → stub_null → fail
     ]}
     fixture_rows[0]["expected"]["snapshot"] = payload["results"][0]

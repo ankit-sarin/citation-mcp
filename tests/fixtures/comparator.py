@@ -196,28 +196,45 @@ class SoftFailuresResult:
 
 
 @dataclass
+class DiscrepancyStructuralResult:
+    # Carrier-invariant structural check on the live `discrepancies` array:
+    # every emitted entry must be a well-formed dict carrying a non-empty
+    # rule + field and a resolved_to key. Replaces the frozen-baseline
+    # set-membership gate (discrepancies_required / discrepancies_forbidden),
+    # which shrank/grew with the live DB set and was carrier-fragile by the
+    # same mechanism as the demoted value assertions (Phase GATE-OPT1, item 8).
+    malformed: list[tuple[int, str]]
+    passed: bool
+
+
+@dataclass
 class TolerantTierResult:
     citation_count: Optional[CitationCountResult] = None
     discrepancies_required: Optional[DiscrepancyRequiredResult] = None
     discrepancies_forbidden: Optional[DiscrepancyForbiddenResult] = None
+    discrepancies_structural: Optional[DiscrepancyStructuralResult] = None
     soft_failures: Optional[SoftFailuresResult] = None
 
     @property
     def passed(self) -> bool:
-        # Gate-relevant tolerant checks: citation_count structural guard
-        # (stub-null / stub-zero, plus optional 10× tripwire when enabled)
-        # and the two discrepancy checks. The longitudinal ±tolerance_pct
-        # band on citation_count is no longer gating — organic upstream
-        # drift surfaces via the snapshot UNEXPECTED mechanism instead.
-        # soft_failures (databases_failed vs allowed_soft_failures) is
-        # upstream availability, not connector correctness — computed and
-        # reported, but NOT gating.
+        # Gate-relevant tolerant checks (Phase GATE-OPT1): the citation_count
+        # structural guards (not_per_source_dict / stub_null / stub_zero, plus
+        # the opt-in 10× tripwire) and the discrepancy *structural* check.
+        #
+        # NO LONGER gating:
+        #   * the longitudinal ±tolerance_pct band on citation_count — organic
+        #     upstream drift surfaces via the snapshot UNEXPECTED mechanism;
+        #   * discrepancies_required / discrepancies_forbidden set-membership —
+        #     frozen-baseline assertions that vary with the live DB set
+        #     (fewer DBs → smaller discrepancy set). Computed and reported for
+        #     visibility, membership drift surfaces in the snapshot tier;
+        #   * soft_failures (databases_failed vs allowed_soft_failures) —
+        #     upstream availability, not connector correctness.
         gate_results = [
             r
             for r in (
                 self.citation_count,
-                self.discrepancies_required,
-                self.discrepancies_forbidden,
+                self.discrepancies_structural,
             )
             if r is not None
         ]
@@ -337,14 +354,32 @@ def compare_tolerant(
         else:
             delta_pct = abs(actual_value - baseline) / baseline * 100
 
-        # Structural correctness guard — only stub-shaped anomalies gate.
+        # Structural correctness guards. All are carrier-invariant shape
+        # sanity — never value assertions (Phase GATE-OPT1):
+        #   * not_per_source_dict — canonical.citation_count must be a
+        #     per-source dict (or null). A bare scalar is a connector-shape
+        #     regression; fires regardless of match state.
+        #   * stub_null / stub_zero — a *matched* row whose count collapsed to
+        #     null / zero is a resolver stub. Conditioned on verified=True:
+        #     on a no-match response (e.g. a sole-carrier upstream-DB outage)
+        #     a null count is the correct echo, NOT a stub. Gating it would
+        #     re-introduce the carrier-fragility this gate exists to remove —
+        #     row_013 collapsed to no-match under the 2026-06-12 OpenAlex
+        #     outage and its null count must not gate.
+        #   * order_of_magnitude — opt-in wrong-record tripwire, also
+        #     match-conditioned (a 10x swing only means "wrong record" if a
+        #     record was matched at all).
+        matched = bool(actual.get("verified"))
         anomaly: Optional[str] = None
-        if actual_value is None and isinstance(baseline, int) and baseline > 0:
+        if raw_actual is not None and not isinstance(raw_actual, dict):
+            anomaly = "not_per_source_dict"
+        elif matched and actual_value is None and isinstance(baseline, int) and baseline > 0:
             anomaly = "stub_null"
-        elif actual_value == 0 and isinstance(baseline, int) and baseline > 0:
+        elif matched and actual_value == 0 and isinstance(baseline, int) and baseline > 0:
             anomaly = "stub_zero"
         elif (
             CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD
+            and matched
             and actual_value is not None
             and isinstance(baseline, int)
             and baseline > 0
@@ -399,6 +434,31 @@ def compare_tolerant(
             disallowed=disallowed,
             passed=(len(disallowed) == 0),
         )
+
+    # Discrepancy structural gate — computed unconditionally against the live
+    # `discrepancies` array (independent of any fixture discrepancy keys). This
+    # is the carrier-invariant replacement for the demoted set-membership gate:
+    # it asserts SHAPE, never membership (Phase GATE-OPT1, item 8).
+    actual_disc_all = actual.get("discrepancies", [])
+    malformed: list[tuple[int, str]] = []
+    if not isinstance(actual_disc_all, list):
+        malformed.append((-1, "discrepancies is not a list"))
+    else:
+        for i, entry in enumerate(actual_disc_all):
+            if not isinstance(entry, dict):
+                malformed.append((i, "entry is not a dict"))
+                continue
+            rule = entry.get("rule")
+            field_name = entry.get("field")
+            if not isinstance(rule, str) or not rule.strip():
+                malformed.append((i, "missing/empty rule"))
+            if not isinstance(field_name, str) or not field_name.strip():
+                malformed.append((i, "missing/empty field"))
+            if "resolved_to" not in entry:
+                malformed.append((i, "missing resolved_to"))
+    result.discrepancies_structural = DiscrepancyStructuralResult(
+        malformed=malformed, passed=(len(malformed) == 0)
+    )
 
     return result
 
