@@ -44,14 +44,35 @@ ROW_029_ALLOWED_REJECTED_BY = {
     "title_similarity_below_floor",
 }
 
-# Rows whose mandatory non-null `year` assertion (Rule 7) reads
-# `expected.snapshot.canonical.year` instead of `expected.hard["year"]`.
-# These rows carry the earliest-year preprint/publication duality trap
-# (preprint year vs later conference-proceedings DOI year), so `year` was
-# de-gated out of `expected.hard` and the all-DBs-up baseline left in the
-# snapshot — edition/availability flips surface as non-gating snapshot diffs.
-# Same relocation idiom as row_030 Path B's `match_quality`, but as a set.
-YEAR_FROM_SNAPSHOT_ROWS = {"row_016", "row_028"}
+# Phase GATE-OPT1 hard-tier denylist (Rule 13 — the un-reintroducibility
+# lever). These are positive upstream-echoed values/decisions that must never
+# gate the live nightly harness; they live in expected.snapshot (non-gating)
+# instead. Re-arming any of them in expected.hard fails this loader, which runs
+# in tests/test_regression_30_fixture.py — so the flaky gate fails in CI, not at
+# 2am in production.
+#
+#   * HARD_DENYLIST_ALWAYS — no carrier-invariant form exists; any presence in
+#     expected.hard is illegal.
+#   * match_found — only the positive (True) form is denylisted; match_found
+#     False is the carrier-invariant negative for no-match/fabrication rows and
+#     stays (see Rule 6 / row_029).
+#   * HARD_DENYLIST_IDENTIFIERS — only a non-null (positive) value is denylisted;
+#     a null identifier is the carrier-invariant negative on no-match rows and
+#     stays (a real DB surfacing an identifier for a fabrication is a connector
+#     bug, never an outage artifact).
+HARD_DENYLIST_ALWAYS = frozenset(
+    {
+        "year",
+        "first_author_surname",
+        "journal",
+        "confidence",
+        "match_quality",
+        "rejected_by",
+    }
+)
+HARD_DENYLIST_IDENTIFIERS = frozenset(
+    {"doi_resolved", "pmid_resolved", "arxiv_id_resolved"}
+)
 
 
 class FixtureValidationError(Exception):
@@ -95,58 +116,66 @@ def _validate(fixture: dict[str, Any]) -> None:
             if not isinstance(src, str) or not EE_SOURCE_RE.match(src):
                 _fail(5, f"{rid}: source={src!r} does not match ^EE-\\d+$")
 
-    # Rule 6: adversarial row constraints.
+    # Rule 6: adversarial row constraints. Under Phase GATE-OPT1 the decision
+    # fields (match_quality, rejected_by, and match_found=True) are demoted out
+    # of expected.hard, so these structural invariants read the baseline from
+    # expected.snapshot. The ONLY hard-tier assertion retained on an adversarial
+    # row is the carrier-invariant negative match_found=False (row_029).
     r029 = next(r for r in rows if r["row_id"] == "row_029")
-    r029_hard = r029["expected"]["hard"]
-    if r029_hard.get("match_found") is not False:
-        _fail(6, f"row_029: match_found={r029_hard.get('match_found')!r}, expected false")
-    if r029_hard.get("rejected_by") not in ROW_029_ALLOWED_REJECTED_BY:
-        _fail(6, f"row_029: rejected_by={r029_hard.get('rejected_by')!r} not in {sorted(ROW_029_ALLOWED_REJECTED_BY)}")
+    s029 = r029["expected"]["snapshot"]
+    if s029.get("verified") is not False:
+        _fail(6, f"row_029: snapshot.verified={s029.get('verified')!r}, expected false")
+    rb029 = (s029.get("score_breakdown") or {}).get("rejected_by")
+    if rb029 not in ROW_029_ALLOWED_REJECTED_BY:
+        _fail(6, f"row_029: snapshot rejected_by={rb029!r} not in {sorted(ROW_029_ALLOWED_REJECTED_BY)}")
+    # row_029 retains the carrier-invariant negative in its gated hard block.
+    if r029["expected"]["hard"].get("match_found") is not False:
+        _fail(6, "row_029: hard.match_found must remain False (carrier-invariant negative)")
 
     r030 = next(r for r in rows if r["row_id"] == "row_030")
-    r030_hard = r030["expected"]["hard"]
-    mf = r030_hard.get("match_found")
-    if mf is False:
-        # Path A: must also have valid rejected_by.
-        if r030_hard.get("rejected_by") not in ROW_029_ALLOWED_REJECTED_BY:
-            _fail(6, f"row_030 Path A: rejected_by={r030_hard.get('rejected_by')!r} not in allowed set")
-    elif mf is True:
-        # Path B: match_quality must be 'low' or 'medium' (Phase 2.E.3 accepted medium).
-        # Sourced from expected.snapshot (informational) rather than expected.hard:
-        # match_quality was demoted out of row_030's gated hard set after Crossref
-        # reshuffled the row onto a third Tukra-chapter edition (edition-drift
-        # demotion). The structural low/medium invariant is preserved here.
-        mq = r030["expected"]["snapshot"].get("match_quality")
+    s030 = r030["expected"]["snapshot"]
+    v030 = s030.get("verified")
+    if v030 is True:
+        # Path B: noisy match -> match_quality must be 'low' or 'medium'
+        # (Phase 2.E.3 accepted medium). Read from snapshot (demoted from hard).
+        mq = s030.get("match_quality")
         if mq not in {"low", "medium"}:
-            _fail(6, f"row_030 Path B: match_quality={mq!r}, expected 'low' or 'medium'")
+            _fail(6, f"row_030 Path B: snapshot.match_quality={mq!r}, expected 'low' or 'medium'")
+    elif v030 is False:
+        # Path A: guard rejection -> valid rejected_by (from snapshot).
+        rb030 = (s030.get("score_breakdown") or {}).get("rejected_by")
+        if rb030 not in ROW_029_ALLOWED_REJECTED_BY:
+            _fail(6, f"row_030 Path A: snapshot rejected_by={rb030!r} not in allowed set")
     else:
-        _fail(6, f"row_030: match_found={mf!r}, expected true or false")
+        _fail(6, f"row_030: snapshot.verified={v030!r}, expected true or false")
 
     for arow in (r029, r030):
         inp = arow.get("input", {})
         if not any(inp.get(k) for k in ("doi", "pmid", "title")):
             _fail(6, f"{arow['row_id']}: input missing all of doi/pmid/title")
 
-    # Rule 7: non-adversarial rows have match_found=true + populated first_author_surname/year/match_quality.
+    # Rule 7: non-adversarial rows are complete matches in the baseline —
+    # match_found=true with populated first_author_surname / year /
+    # match_quality. Under Phase GATE-OPT1 these are all demoted out of
+    # expected.hard, so the completeness assertion reads them UNIFORMLY from
+    # expected.snapshot for every row (this collapses the v12
+    # YEAR_FROM_SNAPSHOT_ROWS named-set stopgap into one uniform rule).
     for r in rows:
         if r["category"] == "adversarial":
             continue
         rid = r["row_id"]
-        h = r["expected"]["hard"]
-        if h.get("match_found") is not True:
-            _fail(7, f"{rid}: match_found={h.get('match_found')!r}, expected true")
-        if not h.get("first_author_surname"):
-            _fail(7, f"{rid}: first_author_surname empty")
-        if rid in YEAR_FROM_SNAPSHOT_ROWS:
-            # Year de-gated out of expected.hard; read the baseline from the
-            # snapshot's canonical record instead (relocation idiom, row_030 Path B).
-            snap_year = r["expected"]["snapshot"].get("canonical", {}).get("year")
-            if snap_year is None:
-                _fail(7, f"{rid}: snapshot canonical.year is null")
-        elif h.get("year") is None:
-            _fail(7, f"{rid}: year is null")
-        if h.get("match_quality") is None:
-            _fail(7, f"{rid}: match_quality is null")
+        s = r["expected"]["snapshot"]
+        if s.get("verified") is not True:
+            _fail(7, f"{rid}: snapshot.verified={s.get('verified')!r}, expected true")
+        canonical = s.get("canonical") or {}
+        authors = canonical.get("authors") or []
+        first_family = (authors[0] or {}).get("family") if authors else None
+        if not first_family:
+            _fail(7, f"{rid}: snapshot canonical first-author family empty")
+        if canonical.get("year") is None:
+            _fail(7, f"{rid}: snapshot canonical.year is null")
+        if s.get("match_quality") is None:
+            _fail(7, f"{rid}: snapshot.match_quality is null")
 
     # Rule 8: arXiv rows.
     for rid in ("row_027", "row_028"):
@@ -159,12 +188,13 @@ def _validate(fixture: dict[str, Any]) -> None:
         if "arxiv" not in r["expected"]["tolerant"].get("allowed_soft_failures", []):
             _fail(8, f"{rid}: allowed_soft_failures missing 'arxiv'")
 
-    # Rule 9: title-only rows (015–018) match_quality == "medium".
+    # Rule 9: title-only rows (015–018) match_quality == "medium" (title-only
+    # cap). Read from snapshot — match_quality demoted from hard (GATE-OPT1).
     for rid in ("row_015", "row_016", "row_017", "row_018"):
         r = next(x for x in rows if x["row_id"] == rid)
-        mq = r["expected"]["hard"].get("match_quality")
+        mq = r["expected"]["snapshot"].get("match_quality")
         if mq != "medium":
-            _fail(9, f"{rid}: match_quality={mq!r}, expected 'medium'")
+            _fail(9, f"{rid}: snapshot.match_quality={mq!r}, expected 'medium'")
 
     # Rule 10: no row has expected.snapshot == null.
     for r in rows:
@@ -187,6 +217,26 @@ def _validate(fixture: dict[str, Any]) -> None:
                 f = entry.get("field")
                 if not isinstance(f, str) or not f.strip():
                     _fail(12, f"{r['row_id']}.{kind}: field={entry.get('field')!r}")
+
+    # Rule 13 (Phase GATE-OPT1 un-reintroducibility lever): expected.hard must
+    # NOT re-arm any positive denylisted field. This is the guard that makes a
+    # future fixture edit re-introducing the flaky gate fail in the test suite
+    # rather than in production. See HARD_DENYLIST_* above.
+    for r in rows:
+        rid = r["row_id"]
+        h = r["expected"]["hard"]
+        for f in sorted(HARD_DENYLIST_ALWAYS):
+            if f in h:
+                _fail(13, f"{rid}: expected.hard re-arms denylisted field {f!r}")
+        if h.get("match_found") is True:
+            _fail(13, f"{rid}: expected.hard re-arms positive match_found=True")
+        for f in sorted(HARD_DENYLIST_IDENTIFIERS):
+            if f in h and h[f] is not None:
+                _fail(
+                    13,
+                    f"{rid}: expected.hard re-arms positive {f}={h[f]!r} "
+                    f"(only a null identifier is permitted, on no-match rows)",
+                )
 
 
 def load_regression_30() -> dict[str, Any]:

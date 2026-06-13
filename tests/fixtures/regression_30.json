@@ -29,16 +29,7 @@
         "year": 2016
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1371/journal.pone.0149482",
-          "pmid_resolved": "26982341",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Liu",
-          "year": 2016
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 21,
@@ -178,16 +169,7 @@
         "year": 2020
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1038/s41598-020-64472-9",
-          "pmid_resolved": "32451395",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Levin",
-          "year": 2020
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 18,
@@ -466,16 +448,7 @@
         "year": 2022
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1126/scirobotics.abj2908",
-          "pmid_resolved": "35080901",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Saeidi",
-          "year": 2022
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 343,
@@ -628,16 +601,7 @@
         "year": 2025
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1111/bju.16742",
-          "pmid_resolved": "40254720",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Bignante",
-          "year": 2025
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 3,
@@ -792,16 +756,7 @@
         "year": 2013
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1016/j.cmpb.2013.01.017",
-          "pmid_resolved": "23566709",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Bauzano",
-          "year": 2013
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 13,
@@ -1034,16 +989,7 @@
         "year": 2019
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1007/s10916-019-1460-9",
-          "pmid_resolved": "31760504",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Sun",
-          "year": 2019
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 27,
@@ -1178,16 +1124,7 @@
         "year": 2023
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1093/milmed/usad210",
-          "pmid_resolved": "37948270",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Yang",
-          "year": 2023
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 4,
@@ -1333,16 +1270,7 @@
         "year": 2025
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.34133/cbsystems.0114",
-          "pmid_resolved": "40230400",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "He",
-          "year": 2024
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 4,
@@ -1501,16 +1429,7 @@
         "year": 2014
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1186/s40638-014-0009-0",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Yip",
-          "year": 2014
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 11,
@@ -1658,16 +1577,7 @@
         "year": 2016
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1142/s2424905x16500082",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Preda",
-          "year": 2016
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 28,
@@ -1955,16 +1865,7 @@
         "year": 2020
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/tro.2020.3031236",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Pedram",
-          "year": 2020
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 64,
@@ -2109,16 +2010,7 @@
         "year": 2021
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/lra.2021.3060402",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Abdelaal",
-          "year": 2021
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 14,
@@ -2261,16 +2153,7 @@
         "year": 2022
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/tase.2022.3219590",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Cursi",
-          "year": 2022
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 20,
@@ -2384,16 +2267,7 @@
         "year": 2024
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1016/j.bspc.2024.107181",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 0.98,
-          "first_author_surname": "Rosero",
-          "year": 2024
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 5,
@@ -2593,16 +2467,7 @@
         "title": "Miniature Robotic Telesurgery Demonstration Aboard the ISS"
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.2514/6.2025-4054",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "medium",
-          "confidence": 1.0,
-          "first_author_surname": "Wagner",
-          "year": 2025
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 0,
@@ -2740,14 +2605,7 @@
         "title": "MEDiC: Autonomous Surgical Robotic Assistance to Maximizing Exposure for Dissection and Cautery"
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/icra55743.2025.11128739",
-          "pmid_resolved": null,
-          "match_quality": "medium",
-          "confidence": 1.0,
-          "first_author_surname": "Liang"
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 6,
@@ -2897,15 +2755,7 @@
         "title": "SRT-H: A hierarchical framework for autonomous surgery via language-conditioned imitation learning."
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1126/scirobotics.adt5254",
-          "pmid_resolved": "40632876",
-          "match_quality": "medium",
-          "confidence": 1.0,
-          "first_author_surname": "Kim",
-          "year": 2025
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 93,
@@ -3089,16 +2939,7 @@
         "title": "Autonomous control of an ultrasound probe for intra-operative ultrasonography using vision-based shape sensing of pneumatically attachable flexible rails."
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1007/s11548-024-03178-z",
-          "pmid_resolved": "38777945",
-          "arxiv_id_resolved": null,
-          "match_quality": "medium",
-          "confidence": 1.0,
-          "first_author_surname": "McDonald-Bowyer",
-          "year": 2024
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 3,
@@ -3281,16 +3122,7 @@
         "year": 2015
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.5772/60137",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Muradore",
-          "year": 2015
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 53,
@@ -3871,16 +3703,7 @@
         "year": 2025
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1126/scirobotics.adt3093",
-          "pmid_resolved": "40668896",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Long",
-          "year": 2025
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 36,
@@ -4371,16 +4194,7 @@
         "year": 2014
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/icra.2014.6907040",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Kehoe",
-          "year": 2014
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 135,
@@ -4537,16 +4351,7 @@
         "year": 2013
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/icra.2013.6630794",
-          "pmid_resolved": "24683500",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Jackson",
-          "year": 2013
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 81,
@@ -4674,16 +4479,7 @@
         "year": 2025
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/tbme.2025.3528465",
-          "pmid_resolved": "40031015",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Jiang",
-          "year": 2025
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 2,
@@ -4828,16 +4624,7 @@
         "year": 1998
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1016/s0140-6736(97)11096-0",
-          "pmid_resolved": "9500320",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Wakefield",
-          "year": 1998
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 2928,
@@ -5191,16 +4978,7 @@
         "year": 2020
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1016/s0140-6736(20)31180-6",
-          "pmid_resolved": "32450107",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Mehra",
-          "year": 2020
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 1251,
@@ -5354,16 +5132,7 @@
         "year": 2017
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1371/journal.pone.0171706",
-          "pmid_resolved": "28199349",
-          "arxiv_id_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Konstantinova",
-          "year": 2017
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 64,
@@ -5492,16 +5261,7 @@
         "year": 2017
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": null,
-          "pmid_resolved": null,
-          "arxiv_id_resolved": "1706.03762",
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "Vaswani",
-          "year": 2017
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 177533,
@@ -5622,14 +5382,7 @@
         "year": 2015
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "doi_resolved": "10.1109/cvpr.2016.90",
-          "pmid_resolved": null,
-          "match_quality": "high",
-          "confidence": 1.0,
-          "first_author_surname": "He"
-        },
+        "hard": {},
         "tolerant": {
           "citation_count": {
             "value": 228677,
@@ -5796,7 +5549,9 @@
       "expected": {
         "hard": {
           "match_found": false,
-          "rejected_by": "title_similarity_below_floor"
+          "doi_resolved": null,
+          "pmid_resolved": null,
+          "arxiv_id_resolved": null
         },
         "tolerant": {
           "discrepancies_required": [],
@@ -5866,12 +5621,7 @@
         "year": 2022
       },
       "expected": {
-        "hard": {
-          "match_found": true,
-          "first_author_surname": "Tukra",
-          "pmid_resolved": null,
-          "arxiv_id_resolved": null
-        },
+        "hard": {},
         "tolerant": {
           "discrepancies_required": [],
           "discrepancies_forbidden": [],
