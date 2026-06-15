@@ -90,36 +90,29 @@ def test_one_row_fails_hard():
 
 
 def test_one_row_fails_tolerant():
-    # Under the structural citation_count guard, only stub-shaped anomalies
-    # gate. row_001 returns a healthy (matched) count → passes; row_002 is a
-    # matched row whose count collapsed to null (resolver stub) → stub_null.
-    # _result() defaults verified=True, so the stub guard is in scope.
-    snap = _result(canonical={"citation_count": {"openalex": 100}})
+    # Phase CMCP-GATE-0615: the tolerant tier gates SOLELY on discrepancy
+    # structural well-formedness. The citation_count surface (value + stub state)
+    # is non-gating, so a null count no longer fails a row — only a malformed
+    # `discrepancies` entry does. row_001 has a clean (empty) discrepancies list
+    # AND a null count → passes; row_002 carries a malformed discrepancy entry
+    # (empty rule, no resolved_to) → discrepancies_structural fails → tolerant
+    # fail. The null count on row_002 is deliberately present to prove it does
+    # NOT contribute to the verdict.
     fixture_rows = [
-        _row(
-            "row_001",
-            {},
-            {"citation_count": {"value": 100, "tolerance_pct": 20}},
-            snap,
-        ),
-        _row(
-            "row_002",
-            {},
-            {"citation_count": {"value": 100, "tolerance_pct": 20}},
-            snap,
-        ),
+        _row("row_001", {}, {"citation_count": {"value": 100, "tolerance_pct": 20}}, {}),
+        _row("row_002", {}, {"citation_count": {"value": 100, "tolerance_pct": 20}}, {}),
     ]
     payload = {"results": [
-        _result(canonical={"citation_count": {"openalex": 110}}),  # healthy → pass
-        _result(canonical={}),                         # null citation_count → stub_null → fail
+        _result(canonical={}, discrepancies=[]),                       # null count, clean → pass
+        _result(canonical={}, discrepancies=[{"rule": "", "field": "year"}]),  # malformed → fail
     ]}
     fixture_rows[0]["expected"]["snapshot"] = payload["results"][0]
     fixture_rows[1]["expected"]["snapshot"] = payload["results"][1]
 
     result = run_comparison(fixture_rows, payload)
     assert result.all_passed_tolerant is False
-    assert result.rows[0].passed_tolerant is True
-    assert result.rows[1].passed_tolerant is False
+    assert result.rows[0].passed_tolerant is True   # null count alone does not gate
+    assert result.rows[1].passed_tolerant is False  # malformed discrepancy gates
 
 
 def test_snapshot_verdicts_aggregated_correctly():

@@ -138,13 +138,14 @@ on the DGX; logs via `journalctl -u citation-mcp -f`.
 uv run pytest -v
 ```
 
-Current count: **339 passing + 2 skipped**. The passing set is
+Current count: **345 passing + 2 skipped**. The passing set is
 unit/integration + fixture-validation in `tests/test_regression_30_fixture.py`
 + the 7 deterministic `canonical.arxiv_id` authority/redundancy invariants in
 `tests/test_arxiv_id_authority.py` + the Phase GATE-OPT1 mocked correctness
-suite (`tests/test_gate_opt1_correctness.py`, T1–T6) and offline-replay
-acceptance checks (`tests/harness/test_replay.py`, skip when their gitignored
-sidecars are absent). The 2 skipped are live upstream-contract checks in
+suite (`tests/test_gate_opt1_correctness.py`, T1–T6) + the Phase CMCP-GATE-0615
+citation_count non-gating suite (`tests/test_gate_opt1_citation_count.py`, 6
+tests) and offline-replay acceptance checks (`tests/harness/test_replay.py`,
+skip when their gitignored sidecars are absent). The 2 skipped are live upstream-contract checks in
 `tests/test_arxiv_id_authority_live.py` that run only under
 `CITATION_MCP_LIVE=1` (and `pytest.skip` — never fail — when Semantic Scholar
 is rate-limited/unavailable).
@@ -310,15 +311,17 @@ explicit deployment spec, not as part of a code change.
     baseline in `expected.snapshot` (where drift surfaces as a non-gating
     snapshot diff). See "Per-row hard-tier gate scoping" below for the
     rows where edition- or availability-volatile fields have been removed.
-  - `expected.tolerant` — citation_count baseline value (gated by a
-    structural anomaly guard: `stub_null` / `stub_zero`, plus an opt-in
-    10× tripwire via `CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD`; no
-    longitudinal band — organic drift surfaces via the snapshot
-    UNEXPECTED mechanism on `canonical.citation_count.*` paths).
-    `tolerance_pct` is retained in the fixture for back-compat but no
-    longer enforced. Plus required and forbidden discrepancy entries
-    keyed on `(rule, field)`, and `allowed_soft_failures` (e.g.
-    `["arxiv"]` for arXiv-opt-in rows where 429s shouldn't fail the row).
+  - `expected.tolerant` — citation_count baseline value. **As of Phase
+    CMCP-GATE-0615 the ENTIRE citation_count surface (value AND stub state:
+    `stub_null` / `stub_zero` / `not_per_source_dict` / the opt-in 10×
+    tripwire) is NON-gating.** The anomalies are still computed and emitted
+    as informational telemetry; organic drift surfaces via the snapshot
+    UNEXPECTED mechanism on `canonical.citation_count.*` paths. `tolerance_pct`
+    is retained in the fixture for back-compat but no longer enforced. Plus
+    required and forbidden discrepancy entries keyed on `(rule, field)`, and
+    `allowed_soft_failures` (e.g. `["arxiv"]` for arXiv-opt-in rows) — both
+    computed/reported but NON-gating (only discrepancy *structural*
+    well-formedness gates). See "Phase CMCP-GATE-0615" below.
   - `expected.snapshot` — full raw response object for delta-style
     regression review when a future code change moves the baseline.
 - **Loader at `tests/fixtures/loader.py`** — `load_regression_30()` reads
@@ -413,12 +416,15 @@ subsumed by a uniform rule: every matched row's `expected.hard` is **empty**.
 
 The reduced hard-tier gate enforces ONLY:
 - **Plumbing** — OAuth PKCE + Cloudflare Tunnel + Streamable-HTTP bulk path.
-- **Structural validity** — `canonical.citation_count` is a per-source dict,
-  never a bare scalar (tolerant anomaly `not_per_source_dict`).
-- **citation_count stub guards** — `stub_null` / `stub_zero`, now **conditioned
-  on `verified=True`**: on a no-match response (e.g. a sole-carrier outage) a
-  null count is the correct echo, not a stub. This is the refinement that keeps
-  row_013's 06-12 collapse from gating.
+- ~~**Structural validity** — `canonical.citation_count` is a per-source dict,
+  never a bare scalar (tolerant anomaly `not_per_source_dict`).~~
+  **SUPERSEDED by Phase CMCP-GATE-0615** — the whole citation_count surface is
+  now non-gating; this shape check moved to the mocked suite.
+- ~~**citation_count stub guards** — `stub_null` / `stub_zero`, conditioned on
+  `verified=True`.~~ **SUPERSEDED by Phase CMCP-GATE-0615** — the
+  `verified=True` conditioning still failed to cover a row matched via
+  non-carrier DBs while BOTH count carriers were down (the 06-15 row_018
+  FAIL). The entire citation_count surface is now non-gating. See below.
 - **Discrepancy structural shape** — each emitted `discrepancies` entry carries
   `rule`+`field`+`resolved_to`. The old frozen-baseline
   `discrepancies_required`/`forbidden` set-membership is **demoted to
@@ -446,7 +452,8 @@ value.
   not at 2am. Denylist sets: `HARD_DENYLIST_ALWAYS`,
   `HARD_DENYLIST_IDENTIFIERS` (non-null only) + `match_found=True`.
 - **Comparator** (`tests/fixtures/comparator.py`): `TolerantTierResult.passed`
-  gates on `citation_count` + `discrepancies_structural` only.
+  gated on `citation_count` + `discrepancies_structural`. **Phase CMCP-GATE-0615
+  reduces this to `discrepancies_structural` only** (see below).
 - **Correctness** now lives in `tests/test_gate_opt1_correctness.py` (T1–T6,
   mocked per-DB payloads incl. the row_013 OpenAlex-sole-carrier Cursi 2022
   case the live gate gave up).
@@ -457,6 +464,82 @@ value.
 - **Out of scope / follow-up**: OpenAlex was sole carrier for row_013 and timed
   out 13× on 06-12 — read-timeout/retry tuning + prioritizing the pending
   academic-access request is a coverage-quality (not gate-stability) follow-up.
+  (See "Phase CMCP-OAX-DISCO" below for the read-only retry-path diagnosis.)
+
+## Phase CMCP-GATE-0615 — citation_count surface fully non-gating
+
+The 2026-06-15 nightly gate FAILed (tolerant, row_018 only) under the reduced
+GATE-OPT1 gate with `src/` byte-identical to `bae3ac9`. Root cause
+(CMCP-DIAG-0615): row_018 matched via Crossref+PubMed (`verified=True`, DOI
+`10.1007/s11548-024-03178-z`) while BOTH citation_count carriers were down at
+once — OpenAlex `ReadTimeout`, Semantic Scholar `429` — so
+`canonical.citation_count=None` on a matched row. GATE-OPT1's `stub_null` guard
+was conditioned on `verified=True` (to absorb the *no-match* sole-carrier case,
+e.g. row_013 on 06-12), but that conditioning does NOT cover a row matched via
+non-carrier DBs while the carriers are down. `citation_count` presence is
+entirely upstream-availability-controlled (carriers = `[openalex,
+semantic_scholar]` only — see `_citation_counts` in `scoring.py`), so gating on
+it (value OR stub state) is the same category error GATE-OPT1 removed elsewhere.
+
+**This change removes the entire citation_count surface from the tolerant
+gating set.** It supersedes the GATE-OPT1 `not_per_source_dict` /
+`stub_null` / `stub_zero` gating bullets above.
+
+The tolerant gate now enforces **ONLY discrepancy structural well-formedness**
+(each emitted `discrepancies` entry is a dict with non-empty `rule`+`field` and
+a `resolved_to` key). `citation_count` anomalies and `soft_failures` are still
+computed and emitted as informational telemetry, but do NOT affect pass/fail.
+
+- **Comparator** (`tests/fixtures/comparator.py`): the gating set is now the
+  explicit, introspectable `TOLERANT_GATE_FIELDS = ("discrepancies_structural",)`;
+  `TolerantTierResult.passed` iterates it. `TOLERANT_GATE_DENYLIST =
+  frozenset({"citation_count"})` names what must never re-enter it.
+- **Loader Rule 14** (`tests/fixtures/loader.py`): un-reintroducibility lever,
+  sibling to Rule 13 — RAISES `FixtureValidationError` if any denylisted field
+  re-enters `comparator.TOLERANT_GATE_FIELDS`, so re-arming the flaky gate fails
+  in `tests/test_regression_30_fixture.py` (CI), not at 2am. Read via the
+  module object so a monkeypatched gating set is honored.
+- **Coverage** relocated to `tests/test_gate_opt1_citation_count.py` (6 tests):
+  (i) a count carrier returning a real count → connector surfaces a non-null
+  per-source count (the genuine stub-bug target, now deterministic); (ii) a
+  matched row with BOTH carriers down → comparator does NOT gate (locks the
+  06-15 case), exercised at the comparator boundary AND end-to-end via
+  `verify_citation`; plus the Rule 14 injection test.
+- **Acceptance**: replay `report_20260615T093002Z.raw.json` → PASS (row_018 now
+  a non-gating snapshot diff); replay `report_20260614T093002Z.raw.json` (clean
+  pre-15 run) → PASS; suite 345 passed / 2 skipped; `git diff bae3ac9 -- src/`
+  empty (no connector change — harness/test-tree only).
+
+## Phase CMCP-OAX-DISCO — upstream transient-failure handling (read-only diagnosis)
+
+Read-only confirmation of how OpenAlex / Semantic Scholar handle transient
+upstream failures (Open Issue #2). **Hypothesis (timeouts bypass the retry
+path) is REFUTED.**
+
+- **Transport timeouts ARE retried.** Both clients' `_request` catch
+  `(httpx.TransportError, httpx.TimeoutException)` — which includes
+  `ReadTimeout`/`ConnectTimeout`/`PoolTimeout` — and retry up to `_MAX_RETRIES=3`
+  (4 attempts total), then re-raise (`openalex.py:188-211`,
+  `semantic_scholar.py:133-156`). Crossref/PubMed share the same dual-trigger
+  shape. The 06-15 `ReadTimeout` was a post-exhaustion re-raise, not a
+  fall-through.
+- **429/5xx** are retried with **`Retry-After` honored** (`max(backoff,
+  Retry-After)`, capped at `_BACKOFF_CAP=10s`); after retries a 429 is *returned*
+  and `raise_for_status()` converts it to the `HTTPStatusError` seen on 06-15.
+- **Timeout config**: bare float `_DEFAULT_TIMEOUT=15.0` ⇒ httpx applies 15s to
+  each phase (connect/read/write/pool). **Per-DB clients**, not shared. The
+  per-DB semaphore (OpenAlex 50, SS 20 auth / 1 anon) wraps the whole retry loop,
+  so one hung request can hold a slot ~70s across 4 attempts + backoff.
+- **Keys present** (running systemd env): no `"… is not set"` startup warning in
+  the journal for either SS or OpenAlex ⇒ SS runs authenticated (20 rps).
+- **No retry/timeout/backoff test coverage** for the OA/SS/Crossref/PubMed retry
+  loops (only arXiv's distinct 429 soft-warning loop is tested).
+- **Fix posture**: largely "working as designed" — the residual failures are
+  genuine upstream unavailability / rate-limit walls; the primary lever is
+  raising the ceiling (academic / higher-tier access). Minor honest code knobs:
+  a per-phase `httpx.Timeout` (shorter connect, longer read) and lifting
+  `_BACKOFF_CAP` so a `Retry-After` ≥10s is fully honored. Deferred to a
+  separately-approved task.
 
 ## Phase 1.D.1 / 1.D.4 known limitations (1.D.2 backlog)
 

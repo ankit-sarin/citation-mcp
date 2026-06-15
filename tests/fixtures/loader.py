@@ -238,6 +238,26 @@ def _validate(fixture: dict[str, Any]) -> None:
                     f"(only a null identifier is permitted, on no-match rows)",
                 )
 
+    # Rule 14 (Phase CMCP-GATE-0615 un-reintroducibility lever — sibling to
+    # Rule 13, but guarding the comparator's TOLERANT gating set rather than the
+    # fixture's hard block). The citation_count surface (value AND stub state) is
+    # entirely upstream-availability-controlled — the 06-15 row_018 FAIL was a
+    # matched row whose count carriers were both down. Gating on it is a category
+    # error. If any denylisted field re-enters comparator.TOLERANT_GATE_FIELDS,
+    # fail here (test_regression_30_fixture.py) — in CI, not at 2am. Read via the
+    # module object (not a bound import) so a monkeypatched gating set is honored.
+    from tests.fixtures import comparator as _comparator
+
+    gating = set(_comparator.TOLERANT_GATE_FIELDS)
+    rearmed = sorted(gating & set(_comparator.TOLERANT_GATE_DENYLIST))
+    if rearmed:
+        _fail(
+            14,
+            f"tolerant gating set re-arms denylisted citation_count field(s): "
+            f"{rearmed} (citation_count is upstream-availability-controlled and "
+            f"must stay non-gating snapshot)",
+        )
+
 
 def load_regression_30() -> dict[str, Any]:
     """Load and validate tests/fixtures/regression_30.json.

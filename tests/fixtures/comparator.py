@@ -207,6 +207,22 @@ class DiscrepancyStructuralResult:
     passed: bool
 
 
+# Phase CMCP-GATE-0615 — the tolerant GATING set, named explicitly so it is
+# introspectable by the loader's Rule 14 un-reintroducibility lever. These are
+# the `TolerantTierResult` attributes whose `.passed` contributes to the verdict;
+# every other computed sub-check (citation_count, soft_failures,
+# discrepancies_required/forbidden) is emitted for visibility but NON-gating.
+TOLERANT_GATE_FIELDS: tuple[str, ...] = ("discrepancies_structural",)
+
+# Fields that must NEVER (re-)enter TOLERANT_GATE_FIELDS. citation_count presence
+# is entirely upstream-availability-controlled — a matched row whose count
+# carriers (OpenAlex + Semantic Scholar) are both down returns a null count that
+# is a correct echo, not a connector defect (the 2026-06-15 row_018 FAIL). Gating
+# on it (value OR stub state) is the same category error GATE-OPT1 removed
+# everywhere else. Re-arming it is caught by loader Rule 14, in CI, not at 2am.
+TOLERANT_GATE_DENYLIST: frozenset[str] = frozenset({"citation_count"})
+
+
 @dataclass
 class TolerantTierResult:
     citation_count: Optional[CitationCountResult] = None
@@ -217,11 +233,20 @@ class TolerantTierResult:
 
     @property
     def passed(self) -> bool:
-        # Gate-relevant tolerant checks (Phase GATE-OPT1): the citation_count
-        # structural guards (not_per_source_dict / stub_null / stub_zero, plus
-        # the opt-in 10× tripwire) and the discrepancy *structural* check.
+        # Gate-relevant tolerant check (Phase CMCP-GATE-0615): the discrepancy
+        # *structural* well-formedness check ONLY. The gating set lives in the
+        # module-level TOLERANT_GATE_FIELDS so it is introspectable (loader
+        # Rule 14) and so re-arming a denylisted field changes BOTH this verdict
+        # and trips the loader guard.
         #
         # NO LONGER gating:
+        #   * citation_count — value AND stub state (stub_null / stub_zero /
+        #     not_per_source_dict / 10× tripwire). The entire citation_count
+        #     surface is upstream-availability-controlled; demoted in
+        #     CMCP-GATE-0615 after the 06-15 row_018 matched-but-carriers-down
+        #     FAIL. Still COMPUTED and EMITTED below (informational); see
+        #     TOLERANT_GATE_DENYLIST. Structural shape is now exercised by the
+        #     deterministic mocked suite (tests/test_gate_opt1_citation_count.py);
         #   * the longitudinal ±tolerance_pct band on citation_count — organic
         #     upstream drift surfaces via the snapshot UNEXPECTED mechanism;
         #   * discrepancies_required / discrepancies_forbidden set-membership —
@@ -231,12 +256,9 @@ class TolerantTierResult:
         #   * soft_failures (databases_failed vs allowed_soft_failures) —
         #     upstream availability, not connector correctness.
         gate_results = [
-            r
-            for r in (
-                self.citation_count,
-                self.discrepancies_structural,
-            )
-            if r is not None
+            getattr(self, name)
+            for name in TOLERANT_GATE_FIELDS
+            if getattr(self, name, None) is not None
         ]
         return all(r.passed for r in gate_results)
 
@@ -354,18 +376,21 @@ def compare_tolerant(
         else:
             delta_pct = abs(actual_value - baseline) / baseline * 100
 
-        # Structural correctness guards. All are carrier-invariant shape
-        # sanity — never value assertions (Phase GATE-OPT1):
-        #   * not_per_source_dict — canonical.citation_count must be a
-        #     per-source dict (or null). A bare scalar is a connector-shape
-        #     regression; fires regardless of match state.
+        # citation_count anomalies — COMPUTED AND EMITTED for visibility, but
+        # NON-GATING as of Phase CMCP-GATE-0615 (see TolerantTierResult.passed
+        # and TOLERANT_GATE_DENYLIST). The entire citation_count surface is
+        # upstream-availability-controlled: a matched row whose count carriers
+        # (OpenAlex + Semantic Scholar) are both down returns a null count that
+        # is a correct echo, not a connector defect (the 06-15 row_018 FAIL that
+        # this demotion closes). The structural-shape correctness these once
+        # guarded now lives in the deterministic mocked suite
+        # (tests/test_gate_opt1_citation_count.py). The anomaly labels below are
+        # retained as informational telemetry:
+        #   * not_per_source_dict — canonical.citation_count is not a per-source
+        #     dict (a bare scalar would be a connector-shape regression).
         #   * stub_null / stub_zero — a *matched* row whose count collapsed to
-        #     null / zero is a resolver stub. Conditioned on verified=True:
-        #     on a no-match response (e.g. a sole-carrier upstream-DB outage)
-        #     a null count is the correct echo, NOT a stub. Gating it would
-        #     re-introduce the carrier-fragility this gate exists to remove —
-        #     row_013 collapsed to no-match under the 2026-06-12 OpenAlex
-        #     outage and its null count must not gate.
+        #     null / zero. Match-conditioned on verified=True so a no-match echo
+        #     is not mislabelled (row_013's 2026-06-12 sole-carrier collapse).
         #   * order_of_magnitude — opt-in wrong-record tripwire, also
         #     match-conditioned (a 10x swing only means "wrong record" if a
         #     record was matched at all).
