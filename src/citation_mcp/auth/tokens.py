@@ -27,6 +27,32 @@ def _now() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Resource identifier (RFC 8707) — the one owner of the slash rule
+# ---------------------------------------------------------------------------
+
+
+def canonical_resource(value: str) -> str:
+    """Canonical form of a resource identifier: one trailing slash stripped.
+
+    The configured OAUTH_AUDIENCE carries a trailing slash while the
+    protected-resource document advertises it without one, and claude.ai has
+    sent both forms over time (DIAG-1024). Every comparison of a resource or
+    an ``aud`` claim goes through this function so the two can never diverge.
+    """
+    return value[:-1] if value.endswith("/") else value
+
+
+def accepted_audiences(canonical: str) -> list[str]:
+    """``aud`` values equal to ``canonical`` up to the trailing-slash difference.
+
+    The slashed form stays accepted so tokens minted before AUD-FIX-1024
+    (``aud`` with a trailing slash) remain valid through their lifetime.
+    """
+    canonical = canonical_resource(canonical)
+    return [canonical, canonical + "/"]
+
+
+# ---------------------------------------------------------------------------
 # JWT (HS256)
 # ---------------------------------------------------------------------------
 
@@ -64,13 +90,17 @@ def verify_access_token(
     issuer: str,
     audience: str,
 ) -> dict:
-    """Decode + validate iss/aud/exp/sub. Raises jwt.InvalidTokenError on failure."""
+    """Decode + validate iss/aud/exp/sub. Raises jwt.InvalidTokenError on failure.
+
+    ``aud`` is accepted if it equals ``audience`` up to a trailing slash
+    (see ``accepted_audiences``).
+    """
     return jwt.decode(
         token,
         signing_key,
         algorithms=["HS256"],
         issuer=issuer,
-        audience=audience,
+        audience=accepted_audiences(audience),
         options={"require": ["exp", "iss", "aud", "sub"]},
     )
 

@@ -60,11 +60,25 @@ class _Recorder:
         return sum(1 for r in self.requests if r.url.path == path)
 
 
+# Production shape: the PRM advertises the slashless canonical resource.
+PRM_RESOURCE = "https://test.example"
+PRM_METADATA = {
+    "resource": PRM_RESOURCE,
+    "authorization_servers": ["https://test.example"],
+    "bearer_methods_supported": ["header"],
+}
+
+
 def _route_as_metadata(rec: _Recorder) -> None:
     rec.route(
         "GET",
         "https://test.example/.well-known/oauth-authorization-server",
         lambda r: httpx.Response(200, json=AS_METADATA),
+    )
+    rec.route(
+        "GET",
+        "https://test.example/.well-known/oauth-protected-resource",
+        lambda r: httpx.Response(200, json=PRM_METADATA),
     )
 
 
@@ -496,3 +510,122 @@ def test_status_redacts_secrets(tmp_path):
     assert refresh_secret not in blob
     assert result["client_id_suffix"] == "XYZ12345"
     assert len(result["client_id_suffix"]) == 8
+
+
+# --- AUD-FIX-1024: resource parameter on every leg (C5) ---------------------
+
+
+def test_authorize_sends_prm_resource_on_authorize_and_code_exchange(
+    tmp_path, monkeypatch
+):
+    """The harness must send exactly what claude.ai sends: the PRM's
+    ``resource``, read live, on /authorize and on the code exchange."""
+    verifier = "verifier_for_resource_check_xyz_0123456789"
+    state = "state_resource"
+    _patch_secrets(monkeypatch, verifier, state)
+
+    rec = _Recorder()
+    _route_as_metadata(rec)
+    rec.route(
+        "POST",
+        "https://test.example/oauth/token",
+        lambda r: httpx.Response(
+            200,
+            json={
+                "access_token": "at", "refresh_token": "rt",
+                "expires_in": 3600, "token_type": "Bearer",
+            },
+        ),
+    )
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        oc.webbrowser, "open", lambda url: captured.setdefault("url", url)
+    )
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir(mode=0o700, parents=True)
+    (config_dir / "client.json").write_text(json.dumps({"client_id": "cid_res"}))
+    client = _make_client(rec, config_dir)
+    threading.Thread(
+        target=_fire_callback, args=(f"code=C&state={state}",), daemon=True
+    ).start()
+
+    client.authorize_interactive(timeout=10)
+
+    assert rec.count_path("/.well-known/oauth-protected-resource") == 1
+    qs = parse_qs(urlparse(captured["url"]).query)
+    assert qs["resource"] == [PRM_RESOURCE]
+    token_reqs = [r for r in rec.requests if r.url.path == "/oauth/token"]
+    form = parse_qs(token_reqs[-1].content.decode())
+    assert form["grant_type"] == ["authorization_code"]
+    assert form["resource"] == [PRM_RESOURCE]
+
+
+def test_refresh_of_stored_token_sends_prm_resource(tmp_path):
+    """A tokens.json written before AUD-FIX-1024 keeps working: refresh needs
+    no re-auth, only the added ``resource`` form field."""
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir(mode=0o700, parents=True)
+    (config_dir / "client.json").write_text(json.dumps({"client_id": "cid"}))
+    now = int(time.time())
+    (config_dir / "tokens.json").write_text(
+        json.dumps(
+            {
+                "access_token": "OLD_A", "refresh_token": "OLD_R",
+                "access_expires_at": now - 1, "refresh_expires_at": now + 100000,
+                "token_type": "Bearer", "obtained_at": now - 3600,
+            }
+        )
+    )
+    rec = _Recorder()
+    _route_as_metadata(rec)
+    rec.route(
+        "POST",
+        "https://test.example/oauth/token",
+        lambda r: httpx.Response(
+            200,
+            json={
+                "access_token": "NEW_A", "refresh_token": "NEW_R",
+                "expires_in": 3600, "token_type": "Bearer",
+            },
+        ),
+    )
+    client = _make_client(rec, config_dir)
+
+    assert client.get_access_token() == "NEW_A"
+
+    form = parse_qs(rec.requests[-1].content.decode())
+    assert form["grant_type"] == ["refresh_token"]
+    assert form["refresh_token"] == ["OLD_R"]
+    assert form["resource"] == [PRM_RESOURCE]
+
+
+def test_missing_prm_resource_fails_loudly(tmp_path):
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir(mode=0o700, parents=True)
+    (config_dir / "client.json").write_text(json.dumps({"client_id": "cid"}))
+    now = int(time.time())
+    (config_dir / "tokens.json").write_text(
+        json.dumps(
+            {
+                "access_token": "A", "refresh_token": "R",
+                "access_expires_at": now - 1, "refresh_expires_at": now + 100000,
+                "token_type": "Bearer", "obtained_at": now - 3600,
+            }
+        )
+    )
+    rec = _Recorder()
+    rec.route(
+        "GET",
+        "https://test.example/.well-known/oauth-authorization-server",
+        lambda r: httpx.Response(200, json=AS_METADATA),
+    )
+    rec.route(
+        "GET",
+        "https://test.example/.well-known/oauth-protected-resource",
+        lambda r: httpx.Response(200, json={"authorization_servers": []}),
+    )
+    client = _make_client(rec, config_dir)
+    with pytest.raises(oc.HarnessOAuthError, match="did not advertise a resource"):
+        client.refresh()
+    assert rec.count_path("/oauth/token") == 0
+    assert "\"R\"" in (config_dir / "tokens.json").read_text()

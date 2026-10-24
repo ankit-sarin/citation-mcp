@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 from urllib.parse import urlencode, urlparse
 
@@ -53,6 +53,12 @@ class OAuthConfig:
     audience: str
     allow_missing_cf_email: bool = False
     dev_user_email: str = "dev@localhost"
+    # Canonical RFC 8707 resource identifier, computed once from ``audience``.
+    # Every minted ``aud`` is this value; never the raw client-supplied one.
+    resource: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.resource = tk.canonical_resource(self.audience)
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +81,16 @@ def _redirect_error(
         params["state"] = state
     sep = "&" if "?" in redirect_uri else "?"
     return RedirectResponse(f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
+
+
+def _resource_is_acceptable(cfg: OAuthConfig, values: list[str]) -> bool:
+    """RFC 8707 ``resource`` check: absent, or every value is our canonical
+    resource up to a trailing slash. Anything else is ``invalid_target``."""
+    return all(tk.canonical_resource(v) == cfg.resource for v in values)
+
+
+def _invalid_target_description(cfg: OAuthConfig) -> str:
+    return f"resource must be {cfg.resource!r}"
 
 
 def _is_valid_redirect_uri(uri: str) -> bool:
@@ -187,7 +203,7 @@ def _make_authorize_handler(
         code_challenge_method = params.get("code_challenge_method")
         state = params.get("state")
         scope = params.get("scope")
-        resource = params.get("resource")
+        resources = params.getlist("resource")
 
         # ----- 1. Validate client + redirect_uri (errors cannot be redirected) -----
 
@@ -225,6 +241,10 @@ def _make_authorize_handler(
                 'code_challenge_method must be "S256" (plain is disallowed by OAuth 2.1)',
                 state,
             )
+        if not _resource_is_acceptable(cfg, resources):
+            return _redirect_error(
+                redirect_uri, "invalid_target", _invalid_target_description(cfg), state
+            )
 
         # ----- 3. Identity bridge -----
 
@@ -248,7 +268,7 @@ def _make_authorize_handler(
             redirect_uri=redirect_uri,
             code_challenge=code_challenge,
             scope=scope,
-            resource=resource,
+            resource=cfg.resource,
             ttl_seconds=tk.AUTHORIZATION_CODE_TTL_SECONDS,
         )
 
@@ -274,17 +294,15 @@ def _issue_token_pair(
     sub: str,
     client_id: str,
     scope: str,
-    resource: str | None,
     refresh_token: str,
 ) -> dict:
-    audience = resource or cfg.audience
     access_token = tk.issue_access_token(
         sub=sub,
         client_id=client_id,
         scope=scope,
         signing_key=cfg.signing_key,
         issuer=cfg.issuer,
-        audience=audience,
+        audience=cfg.resource,
     )
     return {
         "access_token": access_token,
@@ -316,6 +334,13 @@ def _make_token_handler(
         client_meta = await cfg.storage.get_client(client_id)
         if client_meta is None:
             return _error_json(401, "invalid_client", "unknown client_id")
+
+        # Checked before any code is consumed or refresh token rotated, so a
+        # rejected request leaves the grant usable.
+        if grant_type in ("authorization_code", "refresh_token") and not (
+            _resource_is_acceptable(cfg, form.getlist("resource"))
+        ):
+            return _error_json(400, "invalid_target", _invalid_target_description(cfg))
 
         if grant_type == "authorization_code":
             code = form.get("code")
@@ -362,7 +387,6 @@ def _make_token_handler(
                 sub=record.user_email,
                 client_id=client_id,
                 scope=record.scope or "",
-                resource=record.resource,
                 refresh_token=refresh,
             )
             return JSONResponse(payload, status_code=200)
@@ -370,7 +394,6 @@ def _make_token_handler(
         if grant_type == "refresh_token":
             presented = form.get("refresh_token")
             requested_scope = form.get("scope")
-            requested_resource = form.get("resource")
             if not presented:
                 return _error_json(
                     400, "invalid_request", "refresh_token is required"
@@ -414,7 +437,6 @@ def _make_token_handler(
                 sub=existing.user_email,
                 client_id=client_id,
                 scope=scope,
-                resource=requested_resource,
                 refresh_token=new_token,
             )
             return JSONResponse(payload, status_code=200)

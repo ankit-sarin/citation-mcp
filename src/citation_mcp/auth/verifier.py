@@ -14,7 +14,7 @@ import logging
 import jwt
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
-from .tokens import verify_access_token
+from .tokens import canonical_resource, verify_access_token
 
 logger = logging.getLogger("citation_mcp.auth.verifier")
 
@@ -23,7 +23,7 @@ class CitationMcpTokenVerifier(TokenVerifier):
     def __init__(self, *, signing_key: str, issuer: str, audience: str):
         self._signing_key = signing_key
         self._issuer = issuer
-        self._audience = audience
+        self._audience = canonical_resource(audience)
 
     async def verify_token(self, token: str) -> AccessToken | None:
         try:

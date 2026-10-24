@@ -14,6 +14,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from .tokens import canonical_resource
+
 logger = logging.getLogger("citation_mcp.auth.discovery")
 
 
@@ -35,7 +37,7 @@ def _as_metadata(issuer: str) -> dict:
 
 def _prm_metadata(issuer: str, audience: str) -> dict:
     return {
-        "resource": audience.rstrip("/"),
+        "resource": canonical_resource(audience),
         "authorization_servers": [issuer.rstrip("/")],
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://github.com/ankit-sarin/citation-mcp",

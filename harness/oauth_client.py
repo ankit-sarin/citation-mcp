@@ -124,6 +124,7 @@ class HarnessOAuthClient:
         self._http = http_client
         self._owns_http = http_client is None
         self._as_metadata: dict | None = None
+        self._resource: str | None = None
         self._client_metadata: dict | None = None
 
     def __enter__(self) -> "HarnessOAuthClient":
@@ -160,6 +161,26 @@ class HarnessOAuthClient:
         r.raise_for_status()
         self._as_metadata = r.json()
         return self._as_metadata
+
+    def _get_resource(self) -> str:
+        """RFC 8707 resource, read live from the protected-resource document.
+
+        claude.ai sends this exact value on authorize, code exchange and
+        refresh; the harness does the same so the nightly run exercises the
+        resource path the real connector uses (AUD-FIX-1024).
+        """
+        if self._resource is not None:
+            return self._resource
+        url = f"{self.base_url}/.well-known/oauth-protected-resource"
+        r = self._client.get(url)
+        r.raise_for_status()
+        resource = r.json().get("resource")
+        if not isinstance(resource, str) or not resource:
+            raise HarnessOAuthError(
+                f"{url} did not advertise a resource identifier"
+            )
+        self._resource = resource
+        return self._resource
 
     def _load_client_metadata(self) -> dict | None:
         if self._client_metadata is not None:
@@ -228,6 +249,7 @@ class HarnessOAuthClient:
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
+            "resource": self._get_resource(),
         }
         url = f"{as_meta['authorization_endpoint']}?{urlencode(params)}"
 
@@ -271,6 +293,7 @@ class HarnessOAuthClient:
             "redirect_uri": REDIRECT_URI,
             "code_verifier": verifier,
             "client_id": client_id,
+            "resource": self._get_resource(),
         }
         r = self._client.post(as_meta["token_endpoint"], data=token_form)
         if r.status_code >= 400:
@@ -306,6 +329,7 @@ class HarnessOAuthClient:
             "grant_type": "refresh_token",
             "refresh_token": tokens["refresh_token"],
             "client_id": client_meta["client_id"],
+            "resource": self._get_resource(),
         }
         r = self._client.post(as_meta["token_endpoint"], data=body)
         if r.status_code >= 400:
