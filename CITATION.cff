@@ -9,6 +9,14 @@ authors:
     affiliation: "University of California, Davis"
     orcid: "https://orcid.org/0000-0001-5671-2267"
 version: 1.0.2
+doi: 10.5281/zenodo.24215783
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24215783
+    description: "Concept DOI: all versions, resolves to the latest release"
+  - type: doi
+    value: 10.5281/zenodo.24215784
+    description: "Version 1.0.2"
 license: MIT
 repository-code: "https://github.com/ankit-sarin/citation-mcp"
 keywords:
