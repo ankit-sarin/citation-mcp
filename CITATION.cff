@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "citation-mcp: self-hosted MCP server for citation verification"
+abstract: "Self-hosted Model Context Protocol server for citation verification, integrity, and discovery."
+authors:
+  - family-names: Sarin
+    given-names: Ankit
+    affiliation: "University of California, Davis"
+    orcid: "https://orcid.org/0000-0001-5671-2267"
+version: 1.0.2
+license: MIT
+repository-code: "https://github.com/ankit-sarin/citation-mcp"
+keywords:
+  - citation verification
+  - Model Context Protocol
+  - research integrity
+  - bibliographic metadata

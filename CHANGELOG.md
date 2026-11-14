@@ -12,35 +12,114 @@ tag history.
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-11-14
+
+No functional change.
+
+### Added
+
+- `CITATION.cff` — citation metadata for the repository.
+- `.gitattributes` — excludes `CLAUDE.md` from source archives
+  (`export-ignore`).
+
 ### Changed
 
+- Version bumped 1.0.1 → 1.0.2 (`pyproject.toml`, `citation_mcp.__version__`,
+  `uv.lock` editable entry) for Zenodo archival.
+
+## [1.0.1] — 2026-10-24
+
+### Fixed
+
+- **AUD-FIX-1024 — canonical RFC 8707 resource; `aud` always canonical**
+  (`c144b5d`). The protected-resource document advertised `OAUTH_AUDIENCE`
+  without its trailing slash, `/oauth/token` minted `aud` from the raw client
+  resource, and the verifier exact-matched the slashed configured audience.
+  Since 2026-10-17 claude.ai has sent the slashless resource it read from the
+  protected-resource document, so every token it received 401'd at `/mcp`
+  (refresh → 401 loop).
+  - `tokens.canonical_resource()`: single owner of the trailing-slash rule.
+  - `/authorize` + both token grants: resource absent or equal up to the
+    trailing slash → accept; else `invalid_target`, no code or token issued,
+    grant untouched.
+  - Minted `aud` is always the canonical value; the verifier also accepts the
+    slashed form so tokens issued before this fix stay valid.
+  - Harness sends the protected-resource value on authorize, code exchange
+    and refresh, so the nightly run uses the same path as claude.ai.
+  - Version bumped 1.0.0 → 1.0.1 (`pyproject.toml`, `citation_mcp.__version__`,
+    `uv.lock` editable entry). Tests: 345 → 406 passed, 2 skipped.
+
+### Changed
+
+- **Harness: `citation_count` demoted from gating to snapshot-informational**
+  (`01dd96c`). `citation_count` organic drift no longer fails the v1.0 gate.
+  Replaced the ±20% tolerant band with coarse stub guards (`stub_null`,
+  `stub_zero`); added a 10× tripwire behind
+  `CITATION_COUNT_ORDER_OF_MAGNITUDE_GUARD` (default off). Hard tier and
+  cross-DB discrepancy tier unchanged. `report.py` now writes a `.raw.json`
+  sidecar with per-row actuals.
+- **Phase GATE-OPT1 — gate reduced to carrier-invariant checks**
+  (`014df9d`, `b04c92d`, `4a05761`, `e909112`). No connector `src/` change.
+  - Harness (`014df9d`): `citation_count` stub guards conditioned on
+    `verified=True`; added a `not_per_source_dict` structural guard; replaced
+    frozen-baseline `discrepancies_required`/`forbidden` gating with a
+    structural well-formedness check (each entry carries
+    `rule`+`field`+`resolved_to`). Required/forbidden remain computed for the
+    report but no longer gate.
+  - Fixture (`b04c92d`): emptied the hard block on every matched row; retained
+    only the carrier-invariant negative on no-match row_029
+    (`match_found=False` + null doi/pmid/arxiv, strengthened). Loader Rule 7/9
+    read completeness/quality from `expected.snapshot` uniformly, collapsing
+    the `YEAR_FROM_SNAPSHOT_ROWS` named-set stopgap; Rule 6 reads adversarial
+    baselines from snapshot; added Rule 13 (re-arming any positive denylisted
+    field in `expected.hard` fails the loader).
+  - Tests (`4a05761`): T1–T6 deterministic mocked correctness (incl. the
+    row_013 OpenAlex sole-carrier case) and `python -m harness.replay
+    <sidecar.raw.json>` offline replay entrypoint, codified in
+    `tests/harness/test_replay.py`.
+- **Phase CMCP-GATE-0615 — `citation_count` surface demoted out of tolerant
+  gating** (`34d3802`). The 06-15 nightly FAIL (row_018) was a matched row
+  whose only `citation_count` carriers were both down. The tolerant gating set
+  is now `TOLERANT_GATE_FIELDS = ("discrepancies_structural",)` with
+  `TOLERANT_GATE_DENYLIST = {"citation_count"}`; stub anomalies are still
+  computed and emitted but non-gating. Loader Rule 14 raises if a denylisted
+  field re-enters the gating set. Coverage relocated to
+  `tests/test_gate_opt1_citation_count.py`. Suite 345 passed / 2 skipped;
+  `src/` byte-identical to `bae3ac9`.
 - Regression fixture `tests/fixtures/regression_30.json` — per-row hard-tier
   gate scoping for edition/availability-volatile fields (baselines preserved
   in `expected.snapshot`; drift now surfaces as non-gating snapshot diffs
   instead of false gate failures):
   - **row_030**: gate scoped to edition-invariant fields only (Crossref
-    re-ranks the Tukra book-chapter editions).
+    re-ranks the Tukra book-chapter editions). (`063ab14`)
   - **row_016 / row_028**: `year` de-gated (earliest-year preprint/publication
     duality trap). The loader's Rule 7 mandatory-non-null-`year` assertion now
     reads `expected.snapshot.canonical.year` for the named set
-    `{"row_016", "row_028"}`.
+    `{"row_016", "row_028"}` (set later removed by GATE-OPT1, b04c92d).
+    (`d4b766c`)
   - **row_016 / row_017 / row_028**: `arxiv_id_resolved` de-gated where it is
     upstream-availability-dependent (title-only rows have Semantic Scholar as
     the sole carrier; row_016 was observed dropping to `None` on 2026-06-08
     during an SS outage). **row_027 keeps `arxiv_id_resolved` gated** — it is
-    echo-backed and never flips.
+    echo-backed and never flips. (`d4b766c`, `d7b787e`)
+- Regression-30 tooling and v0.3.5 response snapshot tracked (`e6266b0`). Six
+  sibling scripts of the already-tracked `regenerate_v0_3_5.py` were never
+  committed, nor was the response snapshot that script stages. The snapshot is
+  retained rather than gitignored because it is not reliably regenerable —
+  reproducing it means re-querying five live citation databases whose
+  responses drift over time. Additive only: no tracked file is modified.
 
 ### Tests
 
 - `tests/test_arxiv_id_authority.py` — 7 deterministic invariants guarding the
   `canonical.arxiv_id` authority list (`[arxiv, semantic_scholar]` only) and
   the title-only-sole-carrier / explicit-arxiv-echo / arXiv+SS-redundancy
-  behaviors. No network/auth.
+  behaviors. No network/auth. (`60bf2c8`)
 - `tests/test_arxiv_id_authority_live.py` — opt-in live upstream-contract check
   (gated behind `CITATION_MCP_LIVE=1`; `pytest.skip` on SS rate-limit, never
-  flakes).
+  flakes). (`60bf2c8`)
 - `tests/test_regression_30_fixture.py` — extended to assert the Rule 7
-  `year`-from-snapshot relocation for the named set.
+  `year`-from-snapshot relocation for the named set. (`d4b766c`)
 
 ## [1.0.0] — 2026-05-28
 
