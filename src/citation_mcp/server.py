@@ -33,6 +33,7 @@ from .scoring import (
     merge_canonical_records,
     normalize_author_surname,
     normalize_doi,
+    normalize_title,
     parse_author_string,
     score_match,
     subtitle_allowance,
@@ -440,7 +441,7 @@ async def verify_citation(
         if db_name == best_db[0]:
             continue
         other_title = matched_by_db[db_name].get("title")
-        if not other_title or not best_title:
+        if not normalize_title(other_title or "") or not normalize_title(best_title or ""):
             continue
         if (
             _title_similarity(best_title, other_title) >= SAME_WORK_TITLE_FLOOR

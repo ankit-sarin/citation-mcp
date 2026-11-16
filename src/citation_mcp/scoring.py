@@ -384,6 +384,8 @@ def _count_populated_input_fields(input_citation: dict) -> int:
 
 def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
     """Layer 2: weighted-field score with sanity guards."""
+    # v1.0.4 (CM-106D FIX C): empty / whitespace-only input authors are ignored everywhere below.
+    input_citation = {**input_citation, "authors": [a for a in (input_citation.get("authors") or []) if _author_to_string(a).strip()]}
     input_title = input_citation.get("title") or ""
     cand_title = candidate.get("title") or ""
     title_sim = _title_similarity(input_title, cand_title)

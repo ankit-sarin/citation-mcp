@@ -52,13 +52,14 @@ def make_cache_key(input_citation: dict) -> str:
     authors = input_citation.get("authors") or []
     payload = {
         "v": _CACHE_KEY_VERSION,
-        "doi": normalize_doi(doi) if doi else "",
+        "doi": normalize_doi(_plain(doi)) if doi else "",
         "pmid": _normalize_pmid(input_citation.get("pmid")) if input_citation.get("pmid") else "",
-        "arxiv_id": _normalize_arxiv(input_citation.get("arxiv_id") or ""),
-        "title": normalize_title(input_citation.get("title") or ""),
-        "authors": [normalize_author_surname(_author_to_string(a)) for a in authors],
+        "arxiv_id": _normalize_arxiv(_plain(input_citation.get("arxiv_id"))),
+        "title": normalize_title(_plain(input_citation.get("title"))),
+        "authors": [normalize_author_surname(_author_to_string({k: _plain(v) for k, v in a.items()} if isinstance(a, dict) else a))
+                    for a in (authors if isinstance(authors, (list, tuple, str)) else [authors])],
         "year": _plain(input_citation.get("year")),
-        "journal": normalize_journal(input_citation.get("journal") or ""),
+        "journal": normalize_journal(_plain(input_citation.get("journal"))),
         "volume": _plain(input_citation.get("volume")),
         "issue": _plain(input_citation.get("issue")),
         "pages": _plain(input_citation.get("pages")),
