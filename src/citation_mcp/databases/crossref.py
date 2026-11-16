@@ -14,7 +14,7 @@ from ..log_redaction import reraise_redacted
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
-_DEFAULT_EMAIL = "asarin@ucdavis.edu"
+_DEFAULT_EMAIL = "axsarin@health.ucdavis.edu"
 _USER_AGENT_TEMPLATE = "citation-mcp/0.1.0 (mailto:{email})"
 
 _MAX_RETRIES = 3

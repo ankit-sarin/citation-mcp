@@ -12,6 +12,26 @@ tag history.
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-11-16
+
+No change to tool inputs, outputs or matching behaviour.
+
+### Added
+
+- `date-released` in `CITATION.cff`.
+
+### Changed
+
+- The default contact address sent to Crossref and PubMed is corrected to the
+  maintainer's current address. `CROSSREF_POLITE_EMAIL` still overrides it.
+- The package author email in `pyproject.toml` is corrected.
+- Version bumped 1.0.2 → 1.0.3 (`pyproject.toml`, `citation_mcp.__version__`,
+  `uv.lock`, `CITATION.cff`).
+
+### Removed
+
+- A personal email address from a test fixture and the developer notes.
+
 ## [1.0.2] — 2026-11-14
 
 No functional change.

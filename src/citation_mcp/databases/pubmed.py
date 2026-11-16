@@ -45,7 +45,7 @@ _RATE_LIMIT_WITHOUT_KEY = 3
 
 
 def _polite_email() -> str:
-    return os.environ.get("CROSSREF_POLITE_EMAIL", "asarin@ucdavis.edu")
+    return os.environ.get("CROSSREF_POLITE_EMAIL", "axsarin@health.ucdavis.edu")
 
 
 def _api_key() -> str | None:

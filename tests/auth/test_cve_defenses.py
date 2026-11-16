@@ -126,7 +126,7 @@ async def test_authenticated_mcp_with_public_host_is_not_421() -> None:
         storage=storage,
     )
     token = issue_access_token(
-        sub="dr.ankitsarin@gmail.com",
+        sub="user@example.com",
         client_id="test-client",
         scope="",
         signing_key=SIGNING_KEY,

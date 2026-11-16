@@ -70,8 +70,8 @@ and arrive here as task specs.
   `<server-base>/` is superseded: since 2026-10-17 it sends the
   protected-resource value, slashless (DIAG-1024).
 - Connector is **live at `https://citation-mcp.digitalsurgeon.dev`** as a
-  claude.ai custom connector. The OFID is registered to
-  `dr.ankitsarin@gmail.com`'s account; first connect was 09:35:24 UTC,
+  claude.ai custom connector. The OFID is registered to the
+  maintainer's personal claude.ai account; first connect was 09:35:24 UTC,
   first successful `tools/call` was 09:41:25 UTC (cache hit, ~14 ms
   server-side).
 
@@ -106,7 +106,7 @@ and arrive here as task specs.
 
 | Variable | Default | Purpose | If unset |
 |---|---|---|---|
-| `CROSSREF_POLITE_EMAIL` | `asarin@ucdavis.edu` | Polite-pool mailto for Crossref + NCBI User-Agent | Crossref runs at default rate |
+| `CROSSREF_POLITE_EMAIL` | `axsarin@health.ucdavis.edu` | Polite-pool mailto for Crossref + NCBI User-Agent | Crossref runs at default rate |
 | `NCBI_API_KEY` | (none) | NCBI E-utilities key for PubMed | PubMed runs at 3 req/sec instead of 10 |
 | `OPENALEX_API_KEY` | (none) | OpenAlex API key | OpenAlex client disabled; warning logged |
 | `SEMANTIC_SCHOLAR_API_KEY` | (none) | Semantic Scholar Graph API key | Semantic Scholar runs at 1 req/sec |

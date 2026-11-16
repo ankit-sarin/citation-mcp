@@ -1,11 +1,11 @@
 [project]
 name = "citation-mcp"
-version = "1.0.2"
+version = "1.0.3"
 description = "Self-hosted Model Context Protocol server for citation verification, integrity, and discovery."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Ankit Sarin", email = "asarin@ucdavis.edu" }]
+authors = [{ name = "Ankit Sarin", email = "axsarin@health.ucdavis.edu" }]
 dependencies = [
     "mcp[cli]>=1.23.0",
     "httpx>=0.27",
