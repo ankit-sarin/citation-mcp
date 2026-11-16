@@ -21,6 +21,9 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.24270761
     description: "Version 1.0.3"
+  - type: doi
+    value: 10.5281/zenodo.24273417
+    description: "Version 1.0.4"
 license: MIT
 repository-code: "https://github.com/ankit-sarin/citation-mcp"
 keywords:
