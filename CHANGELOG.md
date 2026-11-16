@@ -12,6 +12,22 @@ tag history.
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-11-16
+
+Correctness release. Tool inputs are unchanged. Response keys are unchanged; some values change as described.
+
+### Fixed
+
+- A lookup with a title and no author could accept a different paper with a loosely similar title. Without an author, a candidate now needs a title similarity of at least 0.90, or a title that differs only by a subtitle.
+- The canonical record could combine fields from different papers, and the reported score could describe a different paper from the canonical record. Records that disagree with the best match are now excluded from the merge and reported in `warnings`.
+- Lookups that differed only in `pmid`, `arxiv_id` or another input field could share a cache entry and return another lookup's result. The cache key now covers every input field. Existing cache entries are not reused.
+- With equal confidence, an identifier match is now reported in preference to a metadata match.
+
+### Changed
+
+- The User-Agent sent to Crossref, PubMed and arXiv carries the package version.
+- Version bumped 1.0.3 → 1.0.4 (`pyproject.toml`, `citation_mcp.__version__`, `uv.lock`, `CITATION.cff`).
+
 ## [1.0.3] — 2026-11-16
 
 No change to tool inputs, outputs or matching behaviour.

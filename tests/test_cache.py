@@ -43,7 +43,9 @@ async def test_purge_expired_removes_only_expired(cache: Cache):
 
 def test_make_cache_key_doi_path():
     key = make_cache_key({"doi": "https://doi.org/10.1056/NEJMoa2034577"})
-    assert key == "verify:doi:10.1056/nejmoa2034577"
+    # v1.0.4 (R4): the DOI path hashes every input field; DOI normalisation still applies.
+    assert key.startswith("verify:doi:")
+    assert key == make_cache_key({"doi": "10.1056/nejmoa2034577"})
 
 
 def test_make_cache_key_metadata_path_is_stable():

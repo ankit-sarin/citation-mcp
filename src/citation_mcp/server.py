@@ -28,11 +28,14 @@ from .databases.openalex import OpenAlexClient, _extract_openalex_id
 from .databases.pubmed import PubMedClient
 from .databases.semantic_scholar import SemanticScholarClient
 from .scoring import (
+    SAME_WORK_TITLE_FLOOR,
+    _title_similarity,
     merge_canonical_records,
     normalize_author_surname,
     normalize_doi,
     parse_author_string,
     score_match,
+    subtitle_allowance,
 )
 
 logger = logging.getLogger("citation_mcp")
@@ -359,7 +362,7 @@ async def verify_citation(
 
     databases_queried: list[str] = []
     databases_failed: list[str] = []
-    matched_records: list[dict] = []
+    matched_by_db: dict[str, dict] = {}
     per_db_score: dict[str, dict] = {}
     rejected_scores: list[dict] = []
 
@@ -387,12 +390,12 @@ async def verify_citation(
         if best is None:
             continue
         if best.get("passed"):
-            matched_records.append(best["record"])
+            matched_by_db[db_name] = best["record"]
             per_db_score[db_name] = best["score"]
         else:
             rejected_scores.append(best["score"])
 
-    if not matched_records:
+    if not matched_by_db:
         # No DB confirmed. Pick the most-informative score_breakdown from the
         # rejected pool (highest confidence; ties broken by presence of rejected_by).
         score_breakdown = None
@@ -418,14 +421,45 @@ async def verify_citation(
         await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=_TTL_NO_MATCH)
         return result
 
+    # Choose a representative score from the matched DBs. Prefer the highest-confidence
+    # one; among equal confidences prefer an identifier-layer score (R5, v1.0.4);
+    # otherwise the fan-out order (max() keeps the first maximal entry).
+    best_db = max(
+        per_db_score.items(),
+        key=lambda kv: (
+            kv[1].get("confidence", 0.0),
+            (kv[1].get("score_breakdown") or {}).get("layer") == "identifier",
+        ),
+    )
+    best_score = best_db[1]
+
+    # Same-work filter before the merge (R3, v1.0.4): keep a confirmed record only if
+    # its title agrees with the best record's title, or it has no title.
+    best_title = matched_by_db[best_db[0]].get("title")
+    for db_name in list(per_db_score):
+        if db_name == best_db[0]:
+            continue
+        other_title = matched_by_db[db_name].get("title")
+        if not other_title or not best_title:
+            continue
+        if (
+            _title_similarity(best_title, other_title) >= SAME_WORK_TITLE_FLOOR
+            or subtitle_allowance(best_title, other_title)
+        ):
+            continue
+        del per_db_score[db_name]
+        del matched_by_db[db_name]
+        warnings.append({
+            "source": "merge",
+            "level": "warning",
+            "message": f"excluded_{db_name}_title_disagrees_with_best_match",
+        })
+    matched_records = list(matched_by_db.values())
+
     # Layer 3 merge.
     merge = merge_canonical_records(matched_records)
     canonical = merge["canonical"]
     discrepancies = merge["discrepancies"]
-
-    # Choose a representative score from the matched DBs. Prefer the highest-confidence one.
-    best_db = max(per_db_score.items(), key=lambda kv: kv[1].get("confidence", 0.0))
-    best_score = best_db[1]
 
     # Aggregate cap flag: if any DB's scorer capped the result, surface a warning.
     capped = any(

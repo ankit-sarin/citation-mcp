@@ -283,6 +283,39 @@ def _title_similarity(input_title: str, candidate_title: str) -> float:
     return fuzz.token_sort_ratio(a, b) / 100.0
 
 
+# v1.0.4 (CM-106B R1–R3) — title acceptance constants.
+NO_AUTHOR_TITLE_FLOOR = 0.90  # R1: minimum title_sim when the input carries no author
+SUBTITLE_MIN_MAIN_WORDS = 3  # R2: minimum normalised words in a title's main part
+SAME_WORK_TITLE_FLOOR = 0.90  # R3: minimum title_sim of a confirmed record to the best record
+
+# R2: first subtitle delimiter — a colon; a question mark followed by more text; or a
+# hyphen, en dash or em dash with whitespace on both sides.
+_SUBTITLE_DELIMITER_RE = re.compile(r":|\?(?=\s*\S)|\s[-–—]\s")
+
+
+def _title_main_part(title: str) -> str:
+    """Raw title up to its first subtitle delimiter (the whole title if there is none)."""
+    m = _SUBTITLE_DELIMITER_RE.search(title)
+    return title[: m.start()] if m else title
+
+
+def subtitle_allowance(title_a: str | None, title_b: str | None) -> bool:
+    """R2: True when one title's main part equals the whole of the other after
+    normalisation, and that main part has at least SUBTITLE_MIN_MAIN_WORDS words.
+
+    Used only by the no-author floor (R1) and the same-work merge filter (R3). It does
+    not change title_sim, the weighted score, or the first-author guard.
+    """
+    if not title_a or not title_b:
+        return False
+    for x, y in ((title_a, title_b), (title_b, title_a)):
+        main = normalize_title(_title_main_part(x))
+        whole = normalize_title(y)
+        if main and len(main.split()) >= SUBTITLE_MIN_MAIN_WORDS and main == whole:
+            return True
+    return False
+
+
 def _year_score(input_year: int | None, candidate_year: int | None) -> float:
     if input_year is None or candidate_year is None:
         return 0.0
@@ -423,7 +456,15 @@ def score_bibliographic_match(input_citation: dict, candidate: dict) -> dict:
         and title_sim < 0.95
     ):
         rejected_by = "first_author_mismatch_low_title_sim"
-    elif input_title and title_sim < 0.70:
+    elif (
+        input_title
+        and not input_authors
+        and title_sim < NO_AUTHOR_TITLE_FLOOR
+        and not subtitle_allowance(input_title, cand_title)
+    ):
+        # R1 (v1.0.4): with no input author, the title is the only identity signal.
+        rejected_by = "title_similarity_below_floor"
+    elif input_title and input_authors and title_sim < 0.70:
         rejected_by = "title_similarity_below_floor"
 
     score_breakdown = {

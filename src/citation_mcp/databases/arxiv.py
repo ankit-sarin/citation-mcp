@@ -18,6 +18,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 
@@ -151,7 +152,7 @@ class ArxivClient:
         self._client = httpx.AsyncClient(
             timeout=timeout,
             transport=transport,
-            headers={"User-Agent": "citation-mcp/0.2.1"},
+            headers={"User-Agent": f"citation-mcp/{__version__}"},
         )
 
     async def _request(self, params: dict[str, Any]) -> httpx.Response:

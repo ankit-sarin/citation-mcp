@@ -27,6 +27,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 
@@ -284,7 +285,7 @@ class PubMedClient:
             base_url=base_url,
             timeout=timeout,
             transport=transport,
-            headers={"User-Agent": f"citation-mcp/0.2.1 (mailto:{self._email})"},
+            headers={"User-Agent": f"citation-mcp/{__version__} (mailto:{self._email})"},
         )
 
     def _params(self, **extra: Any) -> dict[str, Any]:

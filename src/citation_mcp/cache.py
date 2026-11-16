@@ -11,7 +11,15 @@ from typing import Any
 
 import aiosqlite
 
-from .scoring import normalize_author_surname, normalize_doi, normalize_title
+from .scoring import (
+    _author_to_string,
+    _normalize_arxiv,
+    _normalize_pmid,
+    normalize_author_surname,
+    normalize_doi,
+    normalize_journal,
+    normalize_title,
+)
 
 _DEFAULT_TTL_SECONDS = 14 * 24 * 60 * 60  # 14 days
 
@@ -23,24 +31,42 @@ def _default_db_path() -> Path:
     return Path.home() / "projects" / "citation-mcp" / "data" / "cache.db"
 
 
+_CACHE_KEY_VERSION = 2  # v1.0.4: keys cover every accepted input field (R4)
+
+
+def _plain(v: Any) -> str:
+    return "" if v is None else str(v).strip()
+
+
 def make_cache_key(input_citation: dict) -> str:
     """Build a stable cache key from a verifyCitation input.
 
-    DOI-present → `verify:doi:<normalized_doi>`
-    Else        → `verify:meta:<sha256(normalized_title|first_author_surname|year)>`
+    Every field the tool accepts (doi, pmid, arxiv_id, title, authors, year,
+    journal, volume, issue, pages) contributes after its existing normalisation,
+    so two inputs that differ in any of them get different keys (v1.0.4, R4).
+
+    DOI-present → `verify:doi:<sha256(payload)>`
+    Else        → `verify:meta:<sha256(payload)>`
     """
     doi = input_citation.get("doi")
-    if doi:
-        return f"verify:doi:{normalize_doi(doi)}"
-
-    title = normalize_title(input_citation.get("title") or "")
     authors = input_citation.get("authors") or []
-    first_author = normalize_author_surname(authors[0]) if authors else ""
-    year = input_citation.get("year")
-    year_s = str(year) if year is not None else ""
-    payload = f"{title}|{first_author}|{year_s}"
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return f"verify:meta:{digest}"
+    payload = {
+        "v": _CACHE_KEY_VERSION,
+        "doi": normalize_doi(doi) if doi else "",
+        "pmid": _normalize_pmid(input_citation.get("pmid")) if input_citation.get("pmid") else "",
+        "arxiv_id": _normalize_arxiv(input_citation.get("arxiv_id") or ""),
+        "title": normalize_title(input_citation.get("title") or ""),
+        "authors": [normalize_author_surname(_author_to_string(a)) for a in authors],
+        "year": _plain(input_citation.get("year")),
+        "journal": normalize_journal(input_citation.get("journal") or ""),
+        "volume": _plain(input_citation.get("volume")),
+        "issue": _plain(input_citation.get("issue")),
+        "pages": _plain(input_citation.get("pages")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return f"verify:{'doi' if doi else 'meta'}:{digest}"
 
 
 class Cache:

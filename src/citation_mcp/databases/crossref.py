@@ -9,13 +9,14 @@ from typing import Any
 
 import httpx
 
+from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
 _DEFAULT_EMAIL = "axsarin@health.ucdavis.edu"
-_USER_AGENT_TEMPLATE = "citation-mcp/0.1.0 (mailto:{email})"
+_USER_AGENT_TEMPLATE = f"citation-mcp/{__version__} (mailto:{{email}})"
 
 _MAX_RETRIES = 3
 _BASE_BACKOFF = 1.0  # seconds
