@@ -8,20 +8,20 @@ We deliberately use XML for efetch because the JSON variant (retmode=json)
 does not exist for the PubMed database — the documented path is XML, parsed
 with the stdlib `xml.etree.ElementTree`.
 
-Rate limit: 10 req/sec with an API key (3 req/sec without). The client
-enforces both with a semaphore (concurrency cap) and a token-bucket pacer
-(time-of-last-N-requests window).
+Rate limit: NCBI allows 10 req/sec with an API key (3 req/sec without). The
+client caps concurrency with a semaphore and, since v1.0.5, spaces every
+attempt (retries included) with a RatePacer: 3 req/sec keyless, and with a key
+the configured CITATION_MCP_RATE_PUBMED (default 7, leaving headroom on the
+shared key).
 """
 
 from __future__ import annotations
 
 import asyncio
-import collections
 import logging
 import os
 import random
 import re
-import time
 from typing import Any
 from xml.etree import ElementTree as ET
 
@@ -30,6 +30,8 @@ import httpx
 from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
+from ..config import RateConfig
+from ..pacing import RatePacer, paced
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,10 @@ _MAX_RETRIES = 3
 _BASE_BACKOFF = 1.0
 _BACKOFF_CAP = 10.0
 
-_RATE_LIMIT_WITH_KEY = 10  # req per second
-_RATE_LIMIT_WITHOUT_KEY = 3
+_RATE_LIMIT_WITH_KEY = 10  # concurrency cap with a key (the request rate is the pacer's)
+_RATE_LIMIT_WITHOUT_KEY = 3  # keyless: concurrency cap and request rate (req/sec)
+# v1.0.5: an omitted pacer argument means "pace at the default rate"; pass None to disable.
+_DEFAULT_PACER: Any = object()
 
 
 def _polite_email() -> str:
@@ -51,34 +55,6 @@ def _polite_email() -> str:
 
 def _api_key() -> str | None:
     return os.environ.get("NCBI_API_KEY") or None
-
-
-class _RateLimiter:
-    """Token-bucket pacer: ensures no more than N requests per rolling window.
-
-    Combined with an outer semaphore that caps concurrency at N, this gives both
-    the throughput cap and the per-second smoothing NCBI expects.
-    """
-
-    def __init__(self, max_per_second: int, window_seconds: float = 1.0) -> None:
-        self._max = max_per_second
-        self._window = window_seconds
-        self._timestamps: collections.deque[float] = collections.deque()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> None:
-        async with self._lock:
-            now = time.monotonic()
-            while self._timestamps and now - self._timestamps[0] >= self._window:
-                self._timestamps.popleft()
-            if len(self._timestamps) >= self._max:
-                sleep_for = self._window - (now - self._timestamps[0])
-                if sleep_for > 0:
-                    await asyncio.sleep(sleep_for)
-                now = time.monotonic()
-                while self._timestamps and now - self._timestamps[0] >= self._window:
-                    self._timestamps.popleft()
-            self._timestamps.append(time.monotonic())
 
 
 def _text(element: ET.Element | None) -> str | None:
@@ -267,6 +243,7 @@ class PubMedClient:
         timeout: float = _DEFAULT_TIMEOUT,
         base_url: str = _BASE_URL,
         transport: httpx.AsyncBaseTransport | None = None,
+        pacer: RatePacer | None = _DEFAULT_PACER,
     ) -> None:
         self._api_key = _api_key()
         self._email = _polite_email()
@@ -280,7 +257,12 @@ class PubMedClient:
             self._enabled = True
             rps = _RATE_LIMIT_WITH_KEY
         self._semaphore = asyncio.Semaphore(rps)
-        self._rate_limiter = _RateLimiter(rps)
+        # v1.0.5: one pacer per client, acquired before every attempt (retries
+        # included). Keyless stays at 3 req/sec; with a key the default is
+        # RateConfig().pubmed, and the server passes the configured rate.
+        if pacer is _DEFAULT_PACER:
+            pacer = RatePacer(RateConfig().pubmed if self._api_key else _RATE_LIMIT_WITHOUT_KEY)
+        self.pacer = pacer
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
@@ -297,8 +279,8 @@ class PubMedClient:
 
     async def _request(self, url: str, params: dict[str, Any]) -> httpx.Response:
         async with self._semaphore:
-            await self._rate_limiter.acquire()
             for attempt in range(_MAX_RETRIES + 1):
+                await paced(self.pacer, "pubmed")
                 try:
                     response = await self._client.get(url, params=params)
                 except (httpx.TransportError, httpx.TimeoutException):

@@ -1,7 +1,10 @@
 """Async Semantic Scholar Graph API client.
 
 Auth: `x-api-key: <key>` header from SEMANTIC_SCHOLAR_API_KEY. With a key,
-20 req/sec semaphore; without, fall back to 1 req/sec and log a warning.
+a concurrency cap of 20; without, 1 and a logged warning. Since v1.0.5 every
+attempt (retries included) also passes a RatePacer at the configured
+CITATION_MCP_RATE_SEMANTIC_SCHOLAR (default 0.7 req/sec): the key's limit is
+1 request per second cumulative across all endpoints.
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ import httpx
 
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
+from ..config import RateConfig
+from ..pacing import RatePacer, paced
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,8 @@ _RATE_LIMIT_ANONYMOUS = 1
 _MAX_RETRIES = 3
 _BASE_BACKOFF = 1.0
 _BACKOFF_CAP = 10.0
+# v1.0.5: an omitted pacer argument means "pace at the default rate"; pass None to disable.
+_DEFAULT_PACER: Any = object()
 
 _FIELDS = (
     "paperId,corpusId,externalIds,title,authors,year,venue,publicationVenue,"
@@ -108,6 +115,7 @@ class SemanticScholarClient:
         timeout: float = _DEFAULT_TIMEOUT,
         base_url: str = _BASE_URL,
         transport: httpx.AsyncBaseTransport | None = None,
+        pacer: RatePacer | None = _DEFAULT_PACER,
     ) -> None:
         self._api_key = _api_key()
         if self._api_key is None:
@@ -120,6 +128,7 @@ class SemanticScholarClient:
             rps = _RATE_LIMIT_AUTHENTICATED
         self._enabled = True
         self._semaphore = asyncio.Semaphore(rps)
+        self.pacer = RatePacer(RateConfig().semantic_scholar) if pacer is _DEFAULT_PACER else pacer
         headers = {"Accept": "application/json"}
         if self._api_key:
             headers["x-api-key"] = self._api_key
@@ -133,6 +142,7 @@ class SemanticScholarClient:
     async def _request(self, url: str, params: dict[str, Any] | None = None) -> httpx.Response:
         async with self._semaphore:
             for attempt in range(_MAX_RETRIES + 1):
+                await paced(self.pacer, "semantic_scholar")
                 try:
                     response = await self._client.get(url, params=params)
                 except (httpx.TransportError, httpx.TimeoutException):

@@ -12,6 +12,8 @@ import httpx
 from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
+from ..config import RateConfig
+from ..pacing import RatePacer, paced
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
@@ -20,6 +22,8 @@ _USER_AGENT_TEMPLATE = f"citation-mcp/{__version__} (mailto:{{email}})"
 
 _MAX_RETRIES = 3
 _BASE_BACKOFF = 1.0  # seconds
+# v1.0.5: omitted pacer arguments mean "pace at the default rate"; pass None to disable.
+_DEFAULT_PACER: Any = object()
 _BACKOFF_CAP = 10.0
 
 
@@ -94,7 +98,17 @@ class CrossrefClient:
     """Async Crossref polite-pool client."""
 
     def __init__(self, timeout: float = _DEFAULT_TIMEOUT, base_url: str = _BASE_URL,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 query_pacer: RatePacer | None = _DEFAULT_PACER,
+                 single_pacer: RatePacer | None = _DEFAULT_PACER):
+        # v1.0.5: Crossref limits list/query requests and single-record requests
+        # separately, so each class has its own pacer, shared by every caller of
+        # this client. Every attempt, retries included, acquires before sending.
+        defaults = RateConfig()
+        self.query_pacer = (RatePacer(defaults.crossref_query)
+                            if query_pacer is _DEFAULT_PACER else query_pacer)
+        self.single_pacer = (RatePacer(defaults.crossref_single)
+                             if single_pacer is _DEFAULT_PACER else single_pacer)
         headers = {
             "User-Agent": _user_agent(),
             "Accept": "application/json",
@@ -106,10 +120,16 @@ class CrossrefClient:
             transport=transport,
         )
 
-    async def _request_with_retries(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Issue a request with bounded retries on 429/5xx."""
+    async def _request_with_retries(self, method: str, url: str, *,
+                                    pacer: RatePacer | None = None, **kwargs) -> httpx.Response:
+        """Issue a request with bounded retries on 429/5xx.
+
+        ``pacer`` is acquired before every attempt (v1.0.5); a backoff wait does not
+        consume a slot. Raises RateBudgetExhausted when the call's deadline cannot be met.
+        """
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
+            await paced(pacer, "crossref")
             try:
                 response = await self._client.request(method, url, **kwargs)
             except (httpx.TransportError, httpx.TimeoutException) as e:
@@ -183,7 +203,8 @@ class CrossrefClient:
             return None
         # Crossref's /works/{doi} endpoint is case-insensitive but the polite pool
         # is friendlier with normalized lowercase DOIs.
-        response = await self._request_with_retries("GET", f"/works/{normalized}")
+        response = await self._request_with_retries("GET", f"/works/{normalized}",
+                                                   pacer=self.single_pacer)
         if response.status_code == 404:
             return None
         try:
@@ -216,7 +237,8 @@ class CrossrefClient:
             # Tolerant ±1 year window.
             params["filter"] = f"from-pub-date:{year - 1},until-pub-date:{year + 1}"
 
-        response = await self._request_with_retries("GET", "/works", params=params)
+        response = await self._request_with_retries("GET", "/works", params=params,
+                                                   pacer=self.query_pacer)
         if response.status_code == 404:
             return []
         try:

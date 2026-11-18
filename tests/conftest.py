@@ -213,11 +213,12 @@ HandlerFn = Callable[[httpx.Request], httpx.Response]
 
 
 def make_mock_crossref_client(handler: HandlerFn) -> CrossrefClient:
-    return CrossrefClient(transport=httpx.MockTransport(handler))
+    # v1.0.5: mock clients are unpaced; pacing has its own tests (tests/test_v105.py).
+    return CrossrefClient(transport=httpx.MockTransport(handler), query_pacer=None, single_pacer=None)
 
 
 def make_mock_pubmed_client(handler: HandlerFn) -> PubMedClient:
-    return PubMedClient(transport=httpx.MockTransport(handler))
+    return PubMedClient(transport=httpx.MockTransport(handler), pacer=None)
 
 
 def make_mock_openalex_client(handler: HandlerFn) -> OpenAlexClient:
@@ -225,7 +226,7 @@ def make_mock_openalex_client(handler: HandlerFn) -> OpenAlexClient:
 
 
 def make_mock_s2_client(handler: HandlerFn) -> SemanticScholarClient:
-    return SemanticScholarClient(transport=httpx.MockTransport(handler))
+    return SemanticScholarClient(transport=httpx.MockTransport(handler), pacer=None)
 
 
 def make_mock_arxiv_client(handler: HandlerFn, min_interval: float = 0.0) -> ArxivClient:
