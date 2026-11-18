@@ -90,9 +90,13 @@ export SEMANTIC_SCHOLAR_API_KEY=...
 
 citation-mcp spaces its requests to Crossref, PubMed and Semantic Scholar so that it
 stays inside each service's rate limit, however many citations or calls are in flight,
-and gives every tool call a time budget. These settings are read once at startup. Each
-must be a positive number; a zero, negative or non-numeric value stops the server at
-startup with an error naming the variable. Unset means the default.
+and gives every tool call a time budget. The pacing is shared by the whole server
+process: every tool call and request, in both the HTTP and the stdio transport, draws on
+the same per-database pacing. These settings are read once, when the process starts and
+before it serves anything. Rates must be from 0.01 to 1000 requests per second and the
+budget from 1 to 3600 seconds; a value outside its range, or not a number, stops the
+process at startup (exit status 2) with an error naming the variable. Unset means the
+default.
 
 | Variable | Default | Unit | What it controls |
 |---|---|---|---|
@@ -110,8 +114,9 @@ citation. No request starts after the budget; a request already in flight may fi
 after it, within its client timeout (10–30 s). OpenAlex and arXiv are not rate-paced
 (arXiv keeps its own 3 s spacing), but they respect the budget.
 
-A result with any database failed or skipped is cached for 24 hours rather than 14 days,
-so the gap is refilled soon.
+A result with any database failed, or with arXiv rate-limited, is cached for 24 hours
+rather than 14 days, so the gap is refilled soon. A result in which any database was
+skipped by the budget is not cached at all.
 
 ## Security / Logging
 

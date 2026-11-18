@@ -15,16 +15,21 @@ tag history.
 ### Added
 - **Per-database request pacing.** Crossref, PubMed and Semantic Scholar requests are
   now spaced so that citation-mcp stays inside each service's published rate limit,
-  however many citations or calls are in flight. Every attempt is paced, retries
+  however many citations or calls are in flight. The pacing is shared by the whole
+  server process: every tool call and every request, in both the HTTP and the stdio
+  transport, draws on the same per-database pacing. Every attempt is paced, retries
   included. Crossref list/query searches and single-record DOI lookups are paced
   separately, because Crossref limits them separately. OpenAlex and arXiv are
   unchanged (arXiv already keeps 3 s between requests).
-- **Configurable rates**, read once at startup from the environment (defaults in
-  brackets): `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` (0.7 req/s),
+- **Configurable rates**, read once when the server process starts, before it serves
+  anything (defaults in brackets): `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` (0.7 req/s),
   `CITATION_MCP_RATE_CROSSREF_QUERY` (2.5), `CITATION_MCP_RATE_CROSSREF_SINGLE` (8),
-  `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3). A value that is
-  not a positive number stops the server at startup with an error naming the variable.
-- **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (210 s). It applies
+  `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3). Rates must be
+  from 0.01 to 1000 requests per second. A value outside that range, or not a number,
+  stops the process at startup: the command exits with status 2 and an error naming the
+  variable.
+- **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (210 s; allowed
+  1 to 3600 s, checked at startup like the rates). It applies
   to verifyCitation, bulkVerifyCitations (one budget for the whole batch) and
   resolveIdentifier. No request to any database starts after the budget runs out: when a
   request, a retry or Retry-After wait, or arXiv's 3 s spacing could not start in time,
@@ -32,7 +37,8 @@ tag history.
   `databases_failed` with the warning `"<db> skipped: rate budget exhausted"`, and the
   call still returns a result for every citation. A request already in flight may finish
   after the budget, within its client timeout (10–30 s), which keeps a call inside the
-  300 s tool-call limit.
+  300 s tool-call limit. A response Crossref has already returned is kept even when the
+  wait its rate-limit headers ask for would run past the budget (the wait is skipped).
 - README: an Acknowledgements section, including the citation requested for Semantic
   Scholar data, and a "Request pacing and time budget" section documenting the five
   settings.
@@ -41,13 +47,18 @@ tag history.
 - **One database can no longer fail the whole call.** Any ordinary error from one
   database (not only HTTP errors) is now reported as that database failing, in the
   existing `databases_failed` + error-warning form, and the other databases' answers are
-  still used. This applies to verifyCitation, bulkVerifyCitations and resolveIdentifier.
+  still used, and the error is logged once at WARNING. This applies to verifyCitation,
+  bulkVerifyCitations and resolveIdentifier.
 - **The contact address is redacted.** The query-string redaction used for logs and for
   error and warning text now blanks `email=` and `mailto=` values as well as API keys.
+  A blanked value now ends at a quote or comma too, so the text around a URL quoted in a
+  message is kept.
 - **Results missing a database are cached for 24 hours, not 14 days.** A match is cached
-  for 14 days only when every queried database answered; if any database failed or was
-  skipped, the result is cached for 24 hours so the gap is refilled soon. The same rule
-  now applies to resolveIdentifier. The cache-key version moves from 2 to 3, so
+  for 14 days only when every queried database answered; if any database failed, or
+  arXiv was rate-limited, the result is cached for 24 hours so the gap is refilled soon.
+  A result in which any database was skipped by the time budget is not cached at all,
+  match or no-match, because it reflects that call's budget rather than the databases.
+  The same rules apply to resolveIdentifier. The cache-key version moves from 2 to 3, so
   verifyCitation entries cached under the old rule are not served (resolveIdentifier
   keys are unversioned; its old entries expire on their own TTL).
 
