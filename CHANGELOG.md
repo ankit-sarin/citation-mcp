@@ -12,6 +12,42 @@ tag history.
 
 ## [Unreleased]
 
+### Added
+- **Per-database request pacing.** Crossref, PubMed and Semantic Scholar requests are
+  now spaced so that citation-mcp stays inside each service's published rate limit,
+  however many citations or calls are in flight. Every attempt is paced, retries
+  included. Crossref list/query searches and single-record DOI lookups are paced
+  separately, because Crossref limits them separately. OpenAlex and arXiv are
+  unchanged (arXiv already keeps 3 s between requests).
+- **Configurable rates**, read once at startup from the environment (defaults in
+  brackets): `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` (0.7 req/s),
+  `CITATION_MCP_RATE_CROSSREF_QUERY` (2.5), `CITATION_MCP_RATE_CROSSREF_SINGLE` (8),
+  `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3). A value that is
+  not a positive number stops the server at startup with an error naming the variable.
+- **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (240 s). It applies
+  to verifyCitation, bulkVerifyCitations (one budget for the whole batch) and
+  resolveIdentifier. When a paced request could not start before the budget runs out,
+  that database is skipped for that citation instead of waiting: it is listed in
+  `databases_failed` with the warning `"<db> skipped: rate budget exhausted"`, and the
+  call still returns a result for every citation.
+- README: an Acknowledgements section, including the citation requested for Semantic
+  Scholar data.
+
+### Changed
+- **One database can no longer fail the whole call.** Any ordinary error from one
+  database (not only HTTP errors) is now reported as that database failing, in the
+  existing `databases_failed` + error-warning form, and the other databases' answers are
+  still used. Error text in warnings passes through the existing key redaction.
+- **Results missing a database are cached for 24 hours, not 14 days.** A match is cached
+  for 14 days only when every queried database answered; if any database failed or was
+  skipped, the result is cached for 24 hours so the gap is refilled soon. The cache-key
+  version moves from 2 to 3, so entries cached under the old rule are not served.
+
+### Unchanged
+- The shape of every tool result: no new keys, no changed field types.
+- Matching decisions, the Retry-After handling and the backoff schedule.
+- No version strings change in this entry.
+
 ## [1.0.4] — 2026-11-16
 
 Correctness release. Tool inputs are unchanged. Response keys are unchanged; some values change as described.

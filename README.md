@@ -178,6 +178,14 @@ Cite the version DOI of the release you used, so readers can retrieve the exact 
 
 Example: Sarin A. citation-mcp: self-hosted MCP server for citation verification. Version 1.0.4. Zenodo; 2026. doi:10.5281/zenodo.24273417
 
+## Acknowledgements
+
+citation-mcp queries Crossref, PubMed (NCBI E-utilities), OpenAlex, Semantic Scholar and arXiv. We thank each of them for providing open scholarly metadata.
+
+Semantic Scholar data are used under the Semantic Scholar API License Agreement. Work that uses citation-mcp should cite:
+
+Kinney R, Anastasiades C, Authur R, et al. The Semantic Scholar Open Data Platform. arXiv. 2023. arXiv:2301.10140. doi:10.48550/arXiv.2301.10140
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
