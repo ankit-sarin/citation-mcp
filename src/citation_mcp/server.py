@@ -25,10 +25,12 @@ from .cache import Cache, make_cache_key
 from .config import RateConfig, load_rate_config
 from .log_redaction import redact_query_string_in_text
 from .pacing import RateBudgetExhausted, RatePacer, budget
-from .databases.arxiv import ArxivClient, ArxivRateLimited
+from .databases.arxiv import ArxivClient, ArxivRateLimited, ArxivSpacing
 from .databases.crossref import CrossrefClient
 from .databases.openalex import OpenAlexClient, _extract_openalex_id
+from .databases.pubmed import _RATE_LIMIT_WITHOUT_KEY as _PUBMED_KEYLESS_RATE
 from .databases.pubmed import PubMedClient
+from .databases.pubmed import _api_key as _ncbi_api_key
 from .databases.semantic_scholar import SemanticScholarClient
 from .scoring import (
     SAME_WORK_TITLE_FLOOR,
@@ -75,48 +77,101 @@ def _budget_warning(db_name: str) -> dict:
     return {"source": db_name, "level": "warning", "message": f"{db_name} skipped: rate budget exhausted"}
 
 
-@asynccontextmanager
-async def _app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    # v1.0.5: rates and budget are read once, before anything else starts; a bad
-    # value raises ConfigError naming the variable and stops startup.
-    rates = load_rate_config()
-    crossref = CrossrefClient(
-        query_pacer=RatePacer(rates.crossref_query),
-        single_pacer=RatePacer(rates.crossref_single),
+@dataclass
+class ProcessPacing:
+    """Pacing state that must exist once per process (v1.0.5, CM-108F).
+
+    The HTTP transport runs stateless: the SDK enters the tool lifespan once per
+    POST /mcp, so anything built inside the lifespan is per request. The rates and
+    the pacing state therefore live here, built once before the server starts
+    serving and injected into the clients each lifespan entry builds. RatePacer
+    holds no event-loop object; ArxivSpacing's asyncio.Lock binds to the serving
+    loop on first contended use, and a process serves from one loop.
+    """
+
+    rates: RateConfig
+    crossref_query: RatePacer
+    crossref_single: RatePacer
+    pubmed: RatePacer
+    semantic_scholar: RatePacer
+    arxiv_spacing: ArxivSpacing
+
+
+def build_process_pacing(rates: RateConfig | None = None) -> ProcessPacing:
+    """Load the rate configuration (unless given) and build the per-process pacing state.
+
+    Raises ConfigError naming the variable when a setting is invalid; callers do
+    this before serving, so a bad setting stops the process at startup.
+    """
+    if rates is None:
+        rates = load_rate_config()
+    return ProcessPacing(
+        rates=rates,
+        crossref_query=RatePacer(rates.crossref_query),
+        crossref_single=RatePacer(rates.crossref_single),
+        # Keyless PubMed stays at 3 req/sec; with a key, the configured rate.
+        pubmed=RatePacer(rates.pubmed if _ncbi_api_key() else _PUBMED_KEYLESS_RATE),
+        semantic_scholar=RatePacer(rates.semantic_scholar),
+        arxiv_spacing=ArxivSpacing(),
     )
-    pubmed = PubMedClient()
-    if pubmed._api_key:
-        pubmed.pacer = RatePacer(rates.pubmed)  # keyless keeps its 3 req/sec pacer
-    openalex = OpenAlexClient()
-    semantic_scholar = SemanticScholarClient(pacer=RatePacer(rates.semantic_scholar))
-    arxiv = ArxivClient()
-    cache = Cache()
-    await cache.init()
-    try:
-        yield AppContext(
-            crossref=crossref,
-            pubmed=pubmed,
-            openalex=openalex,
-            semantic_scholar=semantic_scholar,
-            arxiv=arxiv,
-            cache=cache,
-            rates=rates,
-        )
-    finally:
-        await asyncio.gather(
-            crossref.aclose(),
-            pubmed.aclose(),
-            openalex.aclose(),
-            semantic_scholar.aclose(),
-            arxiv.aclose(),
-            return_exceptions=True,
-        )
-        await cache.close()
 
 
-def build_lifespan() -> Callable[[FastMCP], AsyncIterator[AppContext]]:
-    """Return the shared lifespan factory so HTTP and stdio use one definition."""
-    return _app_lifespan
+_process_pacing: ProcessPacing | None = None
+
+
+def default_process_pacing() -> ProcessPacing:
+    """The stdio transport's process-wide pacing state, built on first use."""
+    global _process_pacing
+    if _process_pacing is None:
+        _process_pacing = build_process_pacing()
+    return _process_pacing
+
+
+def build_lifespan(
+    pacing: ProcessPacing | None = None,
+) -> Callable[[FastMCP], AsyncIterator[AppContext]]:
+    """Return the tool lifespan, sharing ``pacing`` across every entry.
+
+    The HTTP app passes the state it built at construction; stdio passes none and
+    uses ``default_process_pacing()``. Clients and the cache stay per entry (as
+    before); only the pacing state is shared.
+    """
+
+    @asynccontextmanager
+    async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+        p = pacing if pacing is not None else default_process_pacing()
+        crossref = CrossrefClient(query_pacer=p.crossref_query, single_pacer=p.crossref_single)
+        pubmed = PubMedClient(pacer=p.pubmed)
+        openalex = OpenAlexClient()
+        semantic_scholar = SemanticScholarClient(pacer=p.semantic_scholar)
+        arxiv = ArxivClient(spacing=p.arxiv_spacing)
+        cache = Cache()
+        await cache.init()
+        try:
+            yield AppContext(
+                crossref=crossref,
+                pubmed=pubmed,
+                openalex=openalex,
+                semantic_scholar=semantic_scholar,
+                arxiv=arxiv,
+                cache=cache,
+                rates=p.rates,
+            )
+        finally:
+            await asyncio.gather(
+                crossref.aclose(),
+                pubmed.aclose(),
+                openalex.aclose(),
+                semantic_scholar.aclose(),
+                arxiv.aclose(),
+                return_exceptions=True,
+            )
+            await cache.close()
+
+    return lifespan
+
+
+_app_lifespan = build_lifespan()
 
 
 # TODO(v1.1): consolidate per-tool entry logging via a wrapper adapter when tool count grows past 5–6.
@@ -413,6 +468,10 @@ async def _verify_citation(
     matched_by_db: dict[str, dict] = {}
     per_db_score: dict[str, dict] = {}
     rejected_scores: list[dict] = []
+    # v1.0.5 (CM-108F): a result with a budget skip is not cached at all (P3); one
+    # with an arXiv rate-limit is cached as degraded, 24 h (P5).
+    budget_skipped = False
+    rate_limited = False
 
     for db_name, strategy, candidates, error in results:
         databases_queried.append(db_name)
@@ -423,19 +482,23 @@ async def _verify_citation(
                 "level": "warning",
                 "message": f"{db_name} rate-limited; result may be incomplete",
             })
+            rate_limited = True
             continue
         if strategy == "budget":
             databases_failed.append(db_name)
             warnings.append(_budget_warning(db_name))
+            budget_skipped = True
             continue
         if error is not None:
             databases_failed.append(db_name)
+            detail = f"{type(error).__name__}: {redact_query_string_in_text(str(error))}"
             warnings.append({
                 "source": db_name,
                 "level": "error",
-                "message": f"{db_name} request failed: {type(error).__name__}: "
-                           f"{redact_query_string_in_text(str(error))}",
+                "message": f"{db_name} request failed: {detail}",
             })
+            # v1.0.5 (CM-108F P7): logged once, redacted, as resolveIdentifier does.
+            logger.warning("verifyCitation: %s failed: %s", db_name, detail)
             continue
         if not candidates:
             continue
@@ -471,7 +534,8 @@ async def _verify_citation(
             "warnings": warnings,
             "score_breakdown": score_breakdown,
         }
-        await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=_TTL_NO_MATCH)
+        if not budget_skipped:
+            await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=_TTL_NO_MATCH)
         return result
 
     # Choose a representative score from the matched DBs. Prefer the highest-confidence
@@ -538,11 +602,14 @@ async def _verify_citation(
         "score_breakdown": best_score.get("score_breakdown"),
     }
 
-    # v1.0.5 (C6): a match is cached for 14 days only when every queried database
-    # answered; a result missing a database (failed or skipped) gets 24 h, so the
-    # gap is refilled soon.
-    ttl = _TTL_MATCH if (result["match_quality"] != "none" and not result["databases_failed"]) else _TTL_NO_MATCH
-    await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=ttl)
+    # v1.0.5: a match is cached for 14 days only when every queried database answered
+    # (C6), arXiv included (CM-108F P5); a result missing a database gets 24 h, so the
+    # gap is refilled soon. A result with a budget skip is not cached (CM-108F P3): it
+    # reflects this call's budget, not the databases.
+    clean = not result["databases_failed"] and not rate_limited
+    ttl = _TTL_MATCH if (result["match_quality"] != "none" and clean) else _TTL_NO_MATCH
+    if not budget_skipped:
+        await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=ttl)
     return result
 
 
@@ -737,6 +804,7 @@ async def _resolve_identifier(
     databases_failed: list[str] = []
 
     warnings: list[dict] = []
+    degraded = {"budget_skipped": False, "rate_limited": False}  # v1.0.5 (CM-108F P3, P5)
 
     async def _query(db_name: str, coro: Awaitable[dict | None]) -> None:
         databases_queried.append(db_name)
@@ -749,11 +817,13 @@ async def _resolve_identifier(
                 "message": f"{db_name} rate-limited; result may be incomplete",
             })
             logger.warning("resolveIdentifier: %s rate-limited", db_name)
+            degraded["rate_limited"] = True
             return
         except RateBudgetExhausted:
             # v1.0.5 (C4): skipped, not failed upstream; the call carries on.
             databases_failed.append(db_name)
             warnings.append(_budget_warning(db_name))
+            degraded["budget_skipped"] = True
             logger.warning("resolveIdentifier: %s skipped: rate budget exhausted", db_name)
             return
         except Exception as e:  # noqa: BLE001 — v1.0.5 (CM-108D): one database never fails the call
@@ -814,9 +884,11 @@ async def _resolve_identifier(
         "warnings": warnings,
     }
     # v1.0.5 (CM-108D, as C6 for verify): 14 days only when no database failed or was
-    # skipped; otherwise 24 h so the gap is refilled soon.
-    ttl = _TTL_RESOLVE if not result["databases_failed"] else _TTL_NO_MATCH
-    await cache.set(cache_key, result, type_="resolve_identifier_result", ttl_seconds=ttl)
+    # rate-limited; otherwise 24 h. Not cached at all after a budget skip (CM-108F P3).
+    clean = not result["databases_failed"] and not degraded["rate_limited"]
+    ttl = _TTL_RESOLVE if clean else _TTL_NO_MATCH
+    if not degraded["budget_skipped"]:
+        await cache.set(cache_key, result, type_="resolve_identifier_result", ttl_seconds=ttl)
     result["resolved"] = {k: result["resolved"].get(k) for k in to_types}
     return result
 
@@ -929,6 +1001,9 @@ register_tools(mcp)
 def main() -> None:
     log_level = os.environ.get("CITATION_MCP_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(level=log_level, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # v1.0.5 (CM-108F): load the rates and build the pacing state before serving,
+    # so an invalid setting stops the process here (ConfigError names the variable).
+    default_process_pacing()
     mcp.run()
 
 

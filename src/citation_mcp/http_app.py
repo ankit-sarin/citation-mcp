@@ -43,7 +43,7 @@ from .auth.discovery import build_discovery_routes
 from .auth.routes import OAuthConfig, build_oauth_routes, load_config_from_env
 from .auth.storage import OAuthStorage
 from .auth.verifier import CitationMcpTokenVerifier
-from .server import build_lifespan, register_tools
+from .server import ProcessPacing, build_lifespan, build_process_pacing, register_tools
 
 logger = logging.getLogger("citation_mcp.http")
 
@@ -179,8 +179,17 @@ def build_http_app(
     host_allowlist: tuple[str, ...] = DEFAULT_HOST_ALLOWLIST,
     oauth_db_path: str | None = None,
     storage: OAuthStorage | None = None,
+    pacing: ProcessPacing | None = None,
 ) -> Starlette:
-    """Build the outer Starlette app wiring SDK /mcp + our OAuth surface."""
+    """Build the outer Starlette app wiring SDK /mcp + our OAuth surface.
+
+    v1.0.5 (CM-108F): the rate configuration is loaded and the pacing state built
+    here, once per app, before anything is served. An invalid setting raises
+    ConfigError from this call. Every stateless /mcp request's lifespan entry
+    shares this one ``pacing``.
+    """
+    if pacing is None:
+        pacing = build_process_pacing()
 
     # 1. FastMCP with our verifier and AuthSettings (resource-server mode).
     verifier = CitationMcpTokenVerifier(
@@ -196,7 +205,7 @@ def build_http_app(
         stateless_http=True,
         token_verifier=verifier,
         auth=auth_settings,
-        lifespan=build_lifespan(),
+        lifespan=build_lifespan(pacing),
         # SDK auto-enables DNS rebinding protection with a localhost-only
         # allowlist whenever its host arg defaults to 127.0.0.1, which 421s
         # legitimate reverse-proxied traffic from Cloudflare Tunnel. Our

@@ -410,42 +410,34 @@ def test_t10_invalid_value_names_the_variable(var, bad):
     assert var in str(exc.value)
 
 
-async def test_t10_invalid_value_stops_startup(monkeypatch, tmp_path):
-    from citation_mcp.config import ConfigError
-    from citation_mcp.server import _app_lifespan
-
-    monkeypatch.setenv("CACHE_DB_PATH", str(tmp_path / "cache.db"))
-    monkeypatch.setenv("CITATION_MCP_RATE_SEMANTIC_SCHOLAR", "0")
-    with pytest.raises(ConfigError) as exc:
-        async with _app_lifespan(None):
-            pass
-    assert "CITATION_MCP_RATE_SEMANTIC_SCHOLAR" in str(exc.value)
-    assert not (tmp_path / "cache.db").exists(), "config is checked before the cache opens"
+# CM-108F: the lifespan-level startup test is replaced by tests/test_v105_part3.py V3
+# (app construction raises; the CLI exits non-zero). These two now read the
+# process-level pacing state, which every lifespan entry shares (V1).
 
 
-async def test_t10_startup_builds_clients_with_configured_rates(monkeypatch, tmp_path):
-    from citation_mcp.server import _app_lifespan
+async def test_t10_process_pacing_uses_configured_rates(monkeypatch, tmp_path):
+    from citation_mcp.server import build_lifespan, build_process_pacing
 
     monkeypatch.setenv("CACHE_DB_PATH", str(tmp_path / "cache.db"))
     monkeypatch.setenv("NCBI_API_KEY", "test-ncbi-key")
     monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "test-s2-key")
     monkeypatch.setenv("CITATION_MCP_RATE_SEMANTIC_SCHOLAR", "0.5")
     monkeypatch.setenv("CITATION_MCP_BULK_BUDGET_SECONDS", "90")
-    async with _app_lifespan(None) as ctx:
-        assert ctx.semantic_scholar.pacer.rate == pytest.approx(0.5)
-        assert ctx.crossref.query_pacer.rate == pytest.approx(2.5)
-        assert ctx.crossref.single_pacer.rate == pytest.approx(8.0)
-        assert ctx.pubmed.pacer.rate == pytest.approx(7.0)
+    pacing = build_process_pacing()
+    assert pacing.semantic_scholar.rate == pytest.approx(0.5)
+    assert pacing.crossref_query.rate == pytest.approx(2.5)
+    assert pacing.crossref_single.rate == pytest.approx(8.0)
+    assert pacing.pubmed.rate == pytest.approx(7.0)
+    async with build_lifespan(pacing)(None) as ctx:
+        assert ctx.semantic_scholar.pacer is pacing.semantic_scholar
         assert ctx.rates.bulk_budget_seconds == pytest.approx(90.0)
 
 
-async def test_t10_keyless_pubmed_rate_stays_as_today(monkeypatch, tmp_path):
-    from citation_mcp.server import _app_lifespan
+def test_t10_keyless_pubmed_rate_stays_as_today(monkeypatch):
+    from citation_mcp.server import build_process_pacing
 
-    monkeypatch.setenv("CACHE_DB_PATH", str(tmp_path / "cache.db"))
     monkeypatch.delenv("NCBI_API_KEY", raising=False)
-    async with _app_lifespan(None) as ctx:
-        assert ctx.pubmed.pacer.rate == pytest.approx(3.0)
+    assert build_process_pacing().pubmed.rate == pytest.approx(3.0)
 
 
 # ---------------------------------------------------------------------------

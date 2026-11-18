@@ -1,7 +1,8 @@
 """Rate and budget configuration, read once at startup (v1.0.5).
 
-Each value must be a positive, finite number. A bad value stops startup with a
-ConfigError naming the variable. No dotenv file is read; the service gets its
+Rates must lie between 0.01 and 1000 requests per second, and the budget between
+1 and 3600 seconds, inclusive. A bad value stops startup with a ConfigError
+naming the variable. No dotenv file is read; the service gets its
 environment from systemd.
 """
 
@@ -11,6 +12,9 @@ import math
 import os
 from dataclasses import dataclass
 from typing import Mapping
+
+RATE_BOUNDS = (0.01, 1000.0)  # requests per second, inclusive
+BUDGET_BOUNDS = (1.0, 3600.0)  # seconds, inclusive
 
 # Variable name -> (RateConfig attribute, default)
 _SETTINGS: dict[str, tuple[str, float]] = {
@@ -35,13 +39,14 @@ class RateConfig:
     bulk_budget_seconds: float = 210.0
 
 
-def _positive(name: str, raw: str) -> float:
+def _bounded(name: str, raw: str, low: float, high: float, unit: str) -> float:
+    problem = f"{name} must be a number from {low:g} to {high:g} {unit} (got {raw!r})"
     try:
         value = float(raw)
     except (TypeError, ValueError):
-        raise ConfigError(f"{name} must be a positive number (got {raw!r})") from None
-    if not math.isfinite(value) or value <= 0:
-        raise ConfigError(f"{name} must be a positive number (got {raw!r})")
+        raise ConfigError(problem) from None
+    if not math.isfinite(value) or not (low <= value <= high):
+        raise ConfigError(problem)
     return value
 
 
@@ -50,5 +55,10 @@ def load_rate_config(environ: Mapping[str, str] | None = None) -> RateConfig:
     values: dict[str, float] = {}
     for name, (attr, default) in _SETTINGS.items():
         raw = env.get(name)
-        values[attr] = default if raw is None else _positive(name, raw)
+        if raw is None:
+            values[attr] = default
+        elif attr == "bulk_budget_seconds":
+            values[attr] = _bounded(name, raw, *BUDGET_BOUNDS, "seconds")
+        else:
+            values[attr] = _bounded(name, raw, *RATE_BOUNDS, "requests per second")
     return RateConfig(**values)

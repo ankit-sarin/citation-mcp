@@ -40,6 +40,20 @@ class ArxivRateLimited(Exception):
     entry) — arXiv 429s are routine and the other DBs typically cover the work.
     """
 
+class ArxivSpacing:
+    """arXiv's minimum-gap state: the lock and the time the last request finished.
+
+    v1.0.5 (CM-108F): one instance per process, shared by every ArxivClient the
+    server builds, so the 3 s gap holds across requests and tool calls. A client
+    built without one gets its own.
+    """
+
+    def __init__(self, min_interval: float = _MIN_INTERVAL_SECONDS) -> None:
+        self.min_interval = min_interval
+        self.lock = asyncio.Lock()
+        self.last_request_at: float | None = None
+
+
 _ATOM_NS = "http://www.w3.org/2005/Atom"
 _ARXIV_NS = "http://arxiv.org/schemas/atom"
 
@@ -142,10 +156,11 @@ class ArxivClient:
         base_url: str = _BASE_URL,
         transport: httpx.AsyncBaseTransport | None = None,
         min_interval: float = _MIN_INTERVAL_SECONDS,
+        spacing: ArxivSpacing | None = None,
     ) -> None:
-        self._min_interval = min_interval
-        self._spacing_lock = asyncio.Lock()
-        self._last_request_at: float | None = None
+        self._spacing = spacing if spacing is not None else ArxivSpacing(min_interval)
+        self._min_interval = self._spacing.min_interval
+        self._spacing_lock = self._spacing.lock
         # Note: arXiv API requires the absolute URL; we don't use base_url path
         # but pass the full URL on each call. We still init the client with
         # base_url for convenience in tests that use MockTransport.
@@ -164,15 +179,15 @@ class ArxivClient:
             check_start("arxiv")
             async with self._spacing_lock:
                 check_start("arxiv")  # the lock itself may have been held past the deadline
-                if self._last_request_at is not None:
-                    elapsed = time.monotonic() - self._last_request_at
+                if self._spacing.last_request_at is not None:
+                    elapsed = time.monotonic() - self._spacing.last_request_at
                     if elapsed < self._min_interval:
                         check_wait(self._min_interval - elapsed, "arxiv")
                         await asyncio.sleep(self._min_interval - elapsed)
                 try:
                     response = await self._client.get(self._base_url, params=params)
                 finally:
-                    self._last_request_at = time.monotonic()
+                    self._spacing.last_request_at = time.monotonic()
             if response.status_code == 429:
                 last_429 = True
                 if attempt >= _MAX_RETRIES:

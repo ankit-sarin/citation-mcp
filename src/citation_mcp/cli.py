@@ -36,7 +36,19 @@ def _http_main(host: str, port: int) -> None:
     uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
 
 
+def _config_error_exit(err: Exception) -> None:
+    """v1.0.5 (CM-108F): an invalid CITATION_MCP_* setting stops the process before it serves."""
+    print(
+        f"error: {err}\n"
+        "       set it to a valid value, or unset it to use the default, then start again",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def main() -> None:
+    from .config import ConfigError
+
     parser = argparse.ArgumentParser(
         prog="citation-mcp",
         description="citation-mcp server: stdio MCP (default) or HTTP transport.",
@@ -61,7 +73,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.transport == "stdio":
-        _stdio_main()
+        try:
+            _stdio_main()
+        except ConfigError as e:
+            _config_error_exit(e)
         return
 
     # HTTP transport: validate required env up front so we fail fast with a
@@ -91,7 +106,10 @@ def main() -> None:
         )
         sys.exit(2)
 
-    _http_main(args.host, args.port)
+    try:
+        _http_main(args.host, args.port)
+    except ConfigError as e:
+        _config_error_exit(e)
 
 
 if __name__ == "__main__":

@@ -133,14 +133,19 @@ def check_start(db_name: str) -> None:
         raise RateBudgetExhausted(db_name)
 
 
+def wait_fits(delay: float) -> bool:
+    """True when a wait of ``delay`` seconds would end by the deadline (or there is none)."""
+    b = _budget.get()
+    return b is None or b.clock() + max(0.0, delay) <= b.deadline
+
+
 def check_wait(delay: float, db_name: str) -> None:
     """Raise RateBudgetExhausted if a wait of ``delay`` seconds would end after the deadline.
 
     Called before a backoff, Retry-After or spacing wait, so that wait is never
     started; the request that would have followed it could not start in time.
     """
-    b = _budget.get()
-    if b is not None and b.clock() + max(0.0, delay) > b.deadline:
+    if not wait_fits(delay):
         raise RateBudgetExhausted(db_name)
 
 

@@ -13,7 +13,7 @@ from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 from ..config import RateConfig
-from ..pacing import RatePacer, check_wait, paced
+from ..pacing import RatePacer, check_wait, paced, wait_fits
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
@@ -195,8 +195,9 @@ class CrossrefClient:
         remaining = response.headers.get("X-Rate-Limit-Remaining")
         if remaining is not None:
             try:
-                if int(remaining) <= 1:
-                    check_wait(seconds, "crossref")  # v1.0.5: never wait past the deadline
+                # v1.0.5 (CM-108F P4): this wait follows a response already received.
+                # If it would cross the call's deadline, skip the wait and keep the response.
+                if int(remaining) <= 1 and wait_fits(seconds):
                     await asyncio.sleep(seconds)
             except ValueError:
                 pass

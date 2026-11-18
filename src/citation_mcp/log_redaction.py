@@ -22,11 +22,13 @@ from typing import Any
 
 import httpx
 
+# The value stops at &, whitespace, a quote (\x27 or \x22) or a comma (v1.0.5,
+# CM-108F), so the text around a URL embedded in a message survives redaction.
 # The leading [?&;] anchor is what prevents `?keyword=foo` from matching:
 # the regex requires one of the listed names to start immediately after a
 # separator, not just to appear as a substring of a longer name.
 _REDACTION_RE = re.compile(
-    r"([?&;](?:api[-_]?key|apikey|key|token|access_token|refresh_token|client_secret|email|mailto)=)([^&\s]+)",
+    r"([?&;](?:api[-_]?key|apikey|key|token|access_token|refresh_token|client_secret|email|mailto)=)([^&\s\x27\x22,]+)",
     flags=re.IGNORECASE,
 )
 _REPLACEMENT = r"\1***"
