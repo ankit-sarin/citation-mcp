@@ -3,6 +3,8 @@
 httpx emits request URLs at INFO. Two of our backends authenticate via
 query parameters — NCBI E-utilities (`api_key=`) and OpenAlex (`api_key=`) —
 which would otherwise leak the key into log files and terminal scrollback.
+Since v1.0.5 the contact address sent as `email=` (NCBI) or `mailto=` is
+blanked the same way, in logs and in error and warning text.
 
 `QueryParamRedactionFilter` rewrites the value of any sensitive query
 parameter to `***` before the log record is emitted. `install_redaction_filter()`
@@ -24,7 +26,7 @@ import httpx
 # the regex requires one of the listed names to start immediately after a
 # separator, not just to appear as a substring of a longer name.
 _REDACTION_RE = re.compile(
-    r"([?&;](?:api[-_]?key|apikey|key|token|access_token|refresh_token|client_secret)=)([^&\s]+)",
+    r"([?&;](?:api[-_]?key|apikey|key|token|access_token|refresh_token|client_secret|email|mailto)=)([^&\s]+)",
     flags=re.IGNORECASE,
 )
 _REPLACEMENT = r"\1***"

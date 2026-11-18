@@ -18,7 +18,7 @@ _SETTINGS: dict[str, tuple[str, float]] = {
     "CITATION_MCP_RATE_CROSSREF_QUERY": ("crossref_query", 2.5),
     "CITATION_MCP_RATE_CROSSREF_SINGLE": ("crossref_single", 8.0),
     "CITATION_MCP_RATE_PUBMED": ("pubmed", 7.0),  # with an NCBI key; keyless stays 3/s
-    "CITATION_MCP_BULK_BUDGET_SECONDS": ("bulk_budget_seconds", 240.0),
+    "CITATION_MCP_BULK_BUDGET_SECONDS": ("bulk_budget_seconds", 210.0),
 }
 
 
@@ -32,7 +32,7 @@ class RateConfig:
     crossref_query: float = 2.5
     crossref_single: float = 8.0
     pubmed: float = 7.0
-    bulk_budget_seconds: float = 240.0
+    bulk_budget_seconds: float = 210.0
 
 
 def _positive(name: str, raw: str) -> float:

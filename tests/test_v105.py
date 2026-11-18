@@ -379,7 +379,7 @@ _RATE_VARS = {
     "CITATION_MCP_RATE_CROSSREF_QUERY": ("crossref_query", 2.5),
     "CITATION_MCP_RATE_CROSSREF_SINGLE": ("crossref_single", 8.0),
     "CITATION_MCP_RATE_PUBMED": ("pubmed", 7.0),
-    "CITATION_MCP_BULK_BUDGET_SECONDS": ("bulk_budget_seconds", 240.0),
+    "CITATION_MCP_BULK_BUDGET_SECONDS": ("bulk_budget_seconds", 210.0),  # CM-108D: was 240
 }
 
 

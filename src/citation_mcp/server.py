@@ -756,9 +756,11 @@ async def _resolve_identifier(
             warnings.append(_budget_warning(db_name))
             logger.warning("resolveIdentifier: %s skipped: rate budget exhausted", db_name)
             return
-        except (httpx.HTTPError, RuntimeError) as e:
+        except Exception as e:  # noqa: BLE001 — v1.0.5 (CM-108D): one database never fails the call
+            # CancelledError is a BaseException and still propagates.
             databases_failed.append(db_name)
-            logger.warning("resolveIdentifier: %s failed: %s", db_name, e)
+            logger.warning("resolveIdentifier: %s failed: %s", db_name,
+                           redact_query_string_in_text(str(e)))
             return
         _merge_ids(resolved, _ids_from_record(rec))
 
@@ -811,7 +813,10 @@ async def _resolve_identifier(
         "databases_failed": sorted(set(databases_failed)),
         "warnings": warnings,
     }
-    await cache.set(cache_key, result, type_="resolve_identifier_result", ttl_seconds=_TTL_RESOLVE)
+    # v1.0.5 (CM-108D, as C6 for verify): 14 days only when no database failed or was
+    # skipped; otherwise 24 h so the gap is refilled soon.
+    ttl = _TTL_RESOLVE if not result["databases_failed"] else _TTL_NO_MATCH
+    await cache.set(cache_key, result, type_="resolve_identifier_result", ttl_seconds=ttl)
     result["resolved"] = {k: result["resolved"].get(k) for k in to_types}
     return result
 
