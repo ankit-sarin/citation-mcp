@@ -13,7 +13,7 @@ from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 from ..config import RateConfig
-from ..pacing import RatePacer, paced
+from ..pacing import RatePacer, check_wait, paced
 
 _BASE_URL = "https://api.crossref.org"
 _DEFAULT_TIMEOUT = 10.0
@@ -136,7 +136,9 @@ class CrossrefClient:
                 last_exc = e
                 if attempt >= _MAX_RETRIES:
                     raise
-                await asyncio.sleep(self._compute_backoff(attempt))
+                wait = self._compute_backoff(attempt)
+                check_wait(wait, "crossref")  # v1.0.5: never wait past the call's deadline
+                await asyncio.sleep(wait)
                 continue
 
             # Honor polite-pool rate-limit headers when present.
@@ -152,7 +154,9 @@ class CrossrefClient:
                         delay = max(delay, float(retry_after))
                     except ValueError:
                         pass
-                await asyncio.sleep(min(delay, _BACKOFF_CAP))
+                wait = min(delay, _BACKOFF_CAP)
+                check_wait(wait, "crossref")  # v1.0.5: never wait past the call's deadline
+                await asyncio.sleep(wait)
                 continue
 
             return response
@@ -192,6 +196,7 @@ class CrossrefClient:
         if remaining is not None:
             try:
                 if int(remaining) <= 1:
+                    check_wait(seconds, "crossref")  # v1.0.5: never wait past the deadline
                     await asyncio.sleep(seconds)
             except ValueError:
                 pass

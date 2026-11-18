@@ -11,11 +11,18 @@ The reservation is a read-modify-write with no ``await`` in between, so on one
 event loop it is atomic without a lock.
 
 A tool call sets a deadline with ``budget(seconds)``; it is carried in a
-ContextVar, so every task created inside the call (the per-database fan-out,
-the per-citation bulk tasks) sees it. Clients call ``paced(pacer, db_name)``
-before each attempt; when the next start would fall after the deadline it
-raises ``RateBudgetExhausted`` instead of waiting, and the server reports that
-database as skipped.
+ContextVar together with the clock it was measured on, so every task created
+inside the call (the per-database fan-out, the per-citation bulk tasks) sees it.
+Clients guard every request and every wait:
+
+- ``paced(pacer, db)`` before each attempt: waits for the pacer (if any) and
+  raises ``RateBudgetExhausted`` when the request could not start by the deadline;
+  with no pacer it still refuses to start a request after the deadline.
+- ``check_wait(delay, db)`` before each backoff, Retry-After or spacing wait:
+  raises ``RateBudgetExhausted`` when the wait would end after the deadline.
+
+The server reports that database as skipped. So no request of any kind starts
+after the deadline; what can follow it is only a request already in flight.
 """
 
 from __future__ import annotations
@@ -25,13 +32,21 @@ import contextvars
 import math
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterator
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
 
-_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
-    "citation_mcp_deadline", default=None
+
+@dataclass(frozen=True)
+class _Budget:
+    deadline: float
+    clock: Clock
+
+
+_budget: contextvars.ContextVar[_Budget | None] = contextvars.ContextVar(
+    "citation_mcp_budget", default=None
 )
 
 
@@ -88,7 +103,8 @@ class RateBudgetExhausted(Exception):
 
 
 def current_deadline() -> float | None:
-    return _deadline.get()
+    b = _budget.get()
+    return None if b is None else b.deadline
 
 
 @contextmanager
@@ -99,20 +115,43 @@ def budget(seconds: float | None, clock: Clock = time.monotonic) -> Iterator[flo
     budget wins, so a bulk call's per-citation verifications share the bulk
     call's single deadline.
     """
-    outer = _deadline.get()
+    outer = _budget.get()
     if seconds is None or outer is not None:
-        yield outer
+        yield None if outer is None else outer.deadline
         return
-    token = _deadline.set(clock() + float(seconds))
+    token = _budget.set(_Budget(deadline=clock() + float(seconds), clock=clock))
     try:
-        yield _deadline.get()
+        yield _budget.get().deadline
     finally:
-        _deadline.reset(token)
+        _budget.reset(token)
+
+
+def check_start(db_name: str) -> None:
+    """Raise RateBudgetExhausted if the deadline has already passed (no request may start)."""
+    b = _budget.get()
+    if b is not None and b.clock() > b.deadline:
+        raise RateBudgetExhausted(db_name)
+
+
+def check_wait(delay: float, db_name: str) -> None:
+    """Raise RateBudgetExhausted if a wait of ``delay`` seconds would end after the deadline.
+
+    Called before a backoff, Retry-After or spacing wait, so that wait is never
+    started; the request that would have followed it could not start in time.
+    """
+    b = _budget.get()
+    if b is not None and b.clock() + max(0.0, delay) > b.deadline:
+        raise RateBudgetExhausted(db_name)
 
 
 async def paced(pacer: RatePacer | None, db_name: str) -> None:
-    """Acquire ``pacer`` against the current deadline; raise RateBudgetExhausted if refused."""
+    """Guard one request attempt against the call's deadline.
+
+    With a pacer: wait for its slot, or raise RateBudgetExhausted if the slot
+    falls after the deadline. Without one: raise if the deadline has passed.
+    """
     if pacer is None:
+        check_start(db_name)
         return
     if not await pacer.acquire(current_deadline()):
         raise RateBudgetExhausted(db_name)

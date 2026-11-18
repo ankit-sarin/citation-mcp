@@ -21,6 +21,7 @@ import httpx
 from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
+from ..pacing import check_start, check_wait
 
 logger = logging.getLogger(__name__)
 
@@ -158,10 +159,15 @@ class ArxivClient:
     async def _request(self, params: dict[str, Any]) -> httpx.Response:
         last_429 = False
         for attempt in range(_MAX_RETRIES + 1):
+            # v1.0.5: no request starts after the call's deadline, and the spacing
+            # wait is not started if the request could not start by then.
+            check_start("arxiv")
             async with self._spacing_lock:
+                check_start("arxiv")  # the lock itself may have been held past the deadline
                 if self._last_request_at is not None:
                     elapsed = time.monotonic() - self._last_request_at
                     if elapsed < self._min_interval:
+                        check_wait(self._min_interval - elapsed, "arxiv")
                         await asyncio.sleep(self._min_interval - elapsed)
                 try:
                     response = await self._client.get(self._base_url, params=params)
@@ -174,12 +180,16 @@ class ArxivClient:
                         "arXiv rate-limited after "
                         f"{_MAX_RETRIES + 1} attempts"
                     )
-                await asyncio.sleep(_BASE_BACKOFF + random.uniform(0, 1.0))
+                wait = _BASE_BACKOFF + random.uniform(0, 1.0)
+                check_wait(wait, "arxiv")
+                await asyncio.sleep(wait)
                 continue
             if 500 <= response.status_code < 600:
                 if attempt >= _MAX_RETRIES:
                     return response
-                await asyncio.sleep(_BASE_BACKOFF + random.uniform(0, 1.0))
+                wait = _BASE_BACKOFF + random.uniform(0, 1.0)
+                check_wait(wait, "arxiv")
+                await asyncio.sleep(wait)
                 continue
             return response
         if last_429:

@@ -20,7 +20,7 @@ import httpx
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 from ..config import RateConfig
-from ..pacing import RatePacer, paced
+from ..pacing import RatePacer, check_wait, paced
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,9 @@ class SemanticScholarClient:
                 except (httpx.TransportError, httpx.TimeoutException):
                     if attempt >= _MAX_RETRIES:
                         raise
-                    await asyncio.sleep(self._backoff(attempt))
+                    wait = self._backoff(attempt)
+                    check_wait(wait, "semantic_scholar")  # v1.0.5: never wait past the call's deadline
+                    await asyncio.sleep(wait)
                     continue
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     if attempt >= _MAX_RETRIES:
@@ -160,7 +162,9 @@ class SemanticScholarClient:
                             delay = max(delay, float(retry_after))
                         except ValueError:
                             pass
-                    await asyncio.sleep(min(delay, _BACKOFF_CAP))
+                    wait = min(delay, _BACKOFF_CAP)
+                    check_wait(wait, "semantic_scholar")
+                    await asyncio.sleep(wait)
                     continue
                 return response
             raise RuntimeError("Semantic Scholar request failed after retries.")

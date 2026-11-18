@@ -31,7 +31,7 @@ from .. import __version__
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
 from ..config import RateConfig
-from ..pacing import RatePacer, paced
+from ..pacing import RatePacer, check_wait, paced
 
 logger = logging.getLogger(__name__)
 
@@ -286,12 +286,16 @@ class PubMedClient:
                 except (httpx.TransportError, httpx.TimeoutException):
                     if attempt >= _MAX_RETRIES:
                         raise
-                    await asyncio.sleep(self._backoff(attempt))
+                    wait = self._backoff(attempt)
+                    check_wait(wait, "pubmed")  # v1.0.5: never wait past the call's deadline
+                    await asyncio.sleep(wait)
                     continue
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     if attempt >= _MAX_RETRIES:
                         return response
-                    await asyncio.sleep(self._backoff(attempt))
+                    wait = self._backoff(attempt)
+                    check_wait(wait, "pubmed")
+                    await asyncio.sleep(wait)
                     continue
                 return response
             raise RuntimeError("PubMed request failed after retries.")

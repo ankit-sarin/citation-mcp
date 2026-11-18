@@ -22,6 +22,7 @@ import httpx
 
 from ..scoring import normalize_doi
 from ..log_redaction import reraise_redacted
+from ..pacing import check_wait, paced
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +189,16 @@ class OpenAlexClient:
     async def _request(self, url: str, params: dict[str, Any] | None = None) -> httpx.Response:
         async with self._semaphore:
             for attempt in range(_MAX_RETRIES + 1):
+                # v1.0.5: OpenAlex is not paced, but no request starts after the call's deadline.
+                await paced(None, "openalex")
                 try:
                     response = await self._client.get(url, params=params)
                 except (httpx.TransportError, httpx.TimeoutException):
                     if attempt >= _MAX_RETRIES:
                         raise
-                    await asyncio.sleep(self._backoff(attempt))
+                    wait = self._backoff(attempt)
+                    check_wait(wait, "openalex")  # v1.0.5: never wait past the call's deadline
+                    await asyncio.sleep(wait)
                     continue
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     if attempt >= _MAX_RETRIES:
@@ -205,7 +210,9 @@ class OpenAlexClient:
                             delay = max(delay, float(retry_after))
                         except ValueError:
                             pass
-                    await asyncio.sleep(min(delay, _BACKOFF_CAP))
+                    wait = min(delay, _BACKOFF_CAP)
+                    check_wait(wait, "openalex")
+                    await asyncio.sleep(wait)
                     continue
                 return response
             raise RuntimeError("OpenAlex request failed after retries.")
