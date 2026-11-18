@@ -86,6 +86,33 @@ export OPENALEX_API_KEY=...
 export SEMANTIC_SCHOLAR_API_KEY=...
 ```
 
+### Request pacing and time budget
+
+citation-mcp spaces its requests to Crossref, PubMed and Semantic Scholar so that it
+stays inside each service's rate limit, however many citations or calls are in flight,
+and gives every tool call a time budget. These settings are read once at startup. Each
+must be a positive number; a zero, negative or non-numeric value stops the server at
+startup with an error naming the variable. Unset means the default.
+
+| Variable | Default | Unit | What it controls |
+|---|---|---|---|
+| `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` | `0.7` | requests per second | Semantic Scholar, all endpoints together (the API key's limit is 1 per second across all endpoints). |
+| `CITATION_MCP_RATE_CROSSREF_QUERY` | `2.5` | requests per second | Crossref list/query requests (title and bibliographic searches). |
+| `CITATION_MCP_RATE_CROSSREF_SINGLE` | `8` | requests per second | Crossref single-record requests (DOI lookups). |
+| `CITATION_MCP_RATE_PUBMED` | `7` | requests per second | PubMed (esearch and efetch together) when `NCBI_API_KEY` is set. Without a key PubMed stays at 3 per second and this setting is not used. |
+| `CITATION_MCP_BULK_BUDGET_SECONDS` | `210` | seconds | The time budget of every tool call: verifyCitation, bulkVerifyCitations (one budget for the whole batch) and resolveIdentifier. |
+
+Every attempt is paced, retries included. When a request, a retry wait or arXiv's 3 s
+spacing could not start before the call's budget runs out, that database is skipped for
+that citation instead of waiting: it is listed in `databases_failed` with the warning
+`"<db> skipped: rate budget exhausted"`, and the call still returns a result for every
+citation. No request starts after the budget; a request already in flight may finish
+after it, within its client timeout (10–30 s). OpenAlex and arXiv are not rate-paced
+(arXiv keeps its own 3 s spacing), but they respect the budget.
+
+A result with any database failed or skipped is cached for 24 hours rather than 14 days,
+so the gap is refilled soon.
+
 ## Security / Logging
 
 httpx logs each outbound request URL at INFO. NCBI E-utilities and OpenAlex

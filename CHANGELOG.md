@@ -24,24 +24,32 @@ tag history.
   `CITATION_MCP_RATE_CROSSREF_QUERY` (2.5), `CITATION_MCP_RATE_CROSSREF_SINGLE` (8),
   `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3). A value that is
   not a positive number stops the server at startup with an error naming the variable.
-- **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (240 s). It applies
+- **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (210 s). It applies
   to verifyCitation, bulkVerifyCitations (one budget for the whole batch) and
-  resolveIdentifier. When a paced request could not start before the budget runs out,
-  that database is skipped for that citation instead of waiting: it is listed in
+  resolveIdentifier. No request to any database starts after the budget runs out: when a
+  request, a retry or Retry-After wait, or arXiv's 3 s spacing could not start in time,
+  that database is skipped for that citation instead of waiting. It is listed in
   `databases_failed` with the warning `"<db> skipped: rate budget exhausted"`, and the
-  call still returns a result for every citation.
+  call still returns a result for every citation. A request already in flight may finish
+  after the budget, within its client timeout (10–30 s), which keeps a call inside the
+  300 s tool-call limit.
 - README: an Acknowledgements section, including the citation requested for Semantic
-  Scholar data.
+  Scholar data, and a "Request pacing and time budget" section documenting the five
+  settings.
 
 ### Changed
 - **One database can no longer fail the whole call.** Any ordinary error from one
   database (not only HTTP errors) is now reported as that database failing, in the
   existing `databases_failed` + error-warning form, and the other databases' answers are
-  still used. Error text in warnings passes through the existing key redaction.
+  still used. This applies to verifyCitation, bulkVerifyCitations and resolveIdentifier.
+- **The contact address is redacted.** The query-string redaction used for logs and for
+  error and warning text now blanks `email=` and `mailto=` values as well as API keys.
 - **Results missing a database are cached for 24 hours, not 14 days.** A match is cached
   for 14 days only when every queried database answered; if any database failed or was
-  skipped, the result is cached for 24 hours so the gap is refilled soon. The cache-key
-  version moves from 2 to 3, so entries cached under the old rule are not served.
+  skipped, the result is cached for 24 hours so the gap is refilled soon. The same rule
+  now applies to resolveIdentifier. The cache-key version moves from 2 to 3, so
+  verifyCitation entries cached under the old rule are not served (resolveIdentifier
+  keys are unversioned; its old entries expire on their own TTL).
 
 ### Unchanged
 - The shape of every tool result: no new keys, no changed field types.
