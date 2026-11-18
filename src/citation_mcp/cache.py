@@ -31,7 +31,9 @@ def _default_db_path() -> Path:
     return Path.home() / "projects" / "citation-mcp" / "data" / "cache.db"
 
 
-_CACHE_KEY_VERSION = 2  # v1.0.4: keys cover every accepted input field (R4)
+_CACHE_KEY_VERSION = 3  # v1.0.5: new TTL rule (C6) — retire entries cached under v1.0.4's
+# rule, which kept results missing a database for 14 days. v1.0.4 (2): keys cover every
+# accepted input field (R4).
 
 
 def _plain(v: Any) -> str:

@@ -124,11 +124,22 @@ GOLDEN_INPUT = {
     "authors": ["Polack, Fernando P.", "Thomas SJ"], "year": 2020, "journal": "N Engl J Med",
     "volume": "383", "issue": "27", "pages": "2603-2615",
 }
-GOLDEN_KEY = "verify:doi:4eec7ac441acda1372d7d419e7028bb9e009efcff3bea7e2b737931a8f3f20eb"
+# v1.0.5 (CM-108C, C6) bumps _CACHE_KEY_VERSION 2 -> 3 on purpose, so the key moves. The
+# v1.0.4 key stays pinned below: with the version set back to 2 it must still come out
+# exactly, which proves the bump is the only change to the key.
+GOLDEN_KEY_V2 = "verify:doi:4eec7ac441acda1372d7d419e7028bb9e009efcff3bea7e2b737931a8f3f20eb"
+GOLDEN_KEY = "verify:doi:ab43c06a55cd46237e14b1255a727536cbe9c01730123192e6e409744dc67622"
 
 
 def test_r5_golden_cache_key():
     assert make_cache_key(GOLDEN_INPUT) == GOLDEN_KEY
+
+
+def test_r5_golden_cache_key_only_the_version_moved(monkeypatch):
+    from citation_mcp import cache as cache_mod
+
+    monkeypatch.setattr(cache_mod, "_CACHE_KEY_VERSION", 2)
+    assert make_cache_key(GOLDEN_INPUT) == GOLDEN_KEY_V2
 
 
 # ---------------------------------------------------------------------------

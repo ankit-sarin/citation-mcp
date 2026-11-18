@@ -15,13 +15,16 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
 
 from .cache import Cache, make_cache_key
+from .config import RateConfig, load_rate_config
+from .log_redaction import redact_query_string_in_text
+from .pacing import RateBudgetExhausted, RatePacer, budget
 from .databases.arxiv import ArxivClient, ArxivRateLimited
 from .databases.crossref import CrossrefClient
 from .databases.openalex import OpenAlexClient, _extract_openalex_id
@@ -64,14 +67,28 @@ class AppContext:
     semantic_scholar: SemanticScholarClient
     arxiv: ArxivClient
     cache: Cache
+    rates: RateConfig = field(default_factory=RateConfig)
+
+
+def _budget_warning(db_name: str) -> dict:
+    """v1.0.5 (C4): the warning a database gets when the call's time budget ran out."""
+    return {"source": db_name, "level": "warning", "message": f"{db_name} skipped: rate budget exhausted"}
 
 
 @asynccontextmanager
 async def _app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    crossref = CrossrefClient()
+    # v1.0.5: rates and budget are read once, before anything else starts; a bad
+    # value raises ConfigError naming the variable and stops startup.
+    rates = load_rate_config()
+    crossref = CrossrefClient(
+        query_pacer=RatePacer(rates.crossref_query),
+        single_pacer=RatePacer(rates.crossref_single),
+    )
     pubmed = PubMedClient()
+    if pubmed._api_key:
+        pubmed.pacer = RatePacer(rates.pubmed)  # keyless keeps its 3 req/sec pacer
     openalex = OpenAlexClient()
-    semantic_scholar = SemanticScholarClient()
+    semantic_scholar = SemanticScholarClient(pacer=RatePacer(rates.semantic_scholar))
     arxiv = ArxivClient()
     cache = Cache()
     await cache.init()
@@ -83,6 +100,7 @@ async def _app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             semantic_scholar=semantic_scholar,
             arxiv=arxiv,
             cache=cache,
+            rates=rates,
         )
     finally:
         await asyncio.gather(
@@ -297,7 +315,12 @@ async def _fetch_from_db(
         # Soft signal for the caller — arXiv being rate-limited is routine and
         # not a "DB failed" condition.
         return db_name, "rate_limited", None, e
-    except (httpx.HTTPError, RuntimeError) as e:
+    except RateBudgetExhausted as e:
+        # v1.0.5 (C4): the call's time budget ran out before this database's
+        # request could start. Reported as skipped; the call carries on.
+        return db_name, "budget", None, e
+    except Exception as e:  # noqa: BLE001 — v1.0.5 (C5): one database never fails the call
+        # CancelledError is a BaseException and still propagates.
         return db_name, "error", None, e
 
 
@@ -307,6 +330,30 @@ async def _fetch_from_db(
 
 
 async def verify_citation(
+    input_citation: dict,
+    crossref: CrossrefClient,
+    cache: Cache,
+    pubmed: PubMedClient | None = None,
+    openalex: OpenAlexClient | None = None,
+    semantic_scholar: SemanticScholarClient | None = None,
+    arxiv: ArxivClient | None = None,
+    force_refresh: bool = False,
+    budget_seconds: float | None = None,
+) -> dict:
+    """verifyCitation under a time budget (v1.0.5).
+
+    ``budget_seconds`` sets the call's deadline unless an enclosing call (a bulk
+    call) already set one; ``None`` means no budget. See ``_verify_citation``.
+    """
+    with budget(budget_seconds):
+        return await _verify_citation(
+            input_citation, crossref, cache,
+            pubmed=pubmed, openalex=openalex, semantic_scholar=semantic_scholar,
+            arxiv=arxiv, force_refresh=force_refresh,
+        )
+
+
+async def _verify_citation(
     input_citation: dict,
     crossref: CrossrefClient,
     cache: Cache,
@@ -377,12 +424,17 @@ async def verify_citation(
                 "message": f"{db_name} rate-limited; result may be incomplete",
             })
             continue
+        if strategy == "budget":
+            databases_failed.append(db_name)
+            warnings.append(_budget_warning(db_name))
+            continue
         if error is not None:
             databases_failed.append(db_name)
             warnings.append({
                 "source": db_name,
                 "level": "error",
-                "message": f"{db_name} request failed: {type(error).__name__}: {error}",
+                "message": f"{db_name} request failed: {type(error).__name__}: "
+                           f"{redact_query_string_in_text(str(error))}",
             })
             continue
         if not candidates:
@@ -486,7 +538,10 @@ async def verify_citation(
         "score_breakdown": best_score.get("score_breakdown"),
     }
 
-    ttl = _TTL_MATCH if result["match_quality"] != "none" else _TTL_NO_MATCH
+    # v1.0.5 (C6): a match is cached for 14 days only when every queried database
+    # answered; a result missing a database (failed or skipped) gets 24 h, so the
+    # gap is refilled soon.
+    ttl = _TTL_MATCH if (result["match_quality"] != "none" and not result["databases_failed"]) else _TTL_NO_MATCH
     await cache.set(cache_key, result, type_="verify_citation_result", ttl_seconds=ttl)
     return result
 
@@ -505,6 +560,7 @@ async def bulk_verify_citations(
     semantic_scholar: SemanticScholarClient | None = None,
     arxiv: ArxivClient | None = None,
     force_refresh: bool = False,
+    budget_seconds: float | None = None,
 ) -> dict:
     """Bulk wrapper over verify_citation with a citation-level concurrency cap.
 
@@ -536,7 +592,9 @@ async def bulk_verify_citations(
                 force_refresh=force_refresh,
             )
 
-    results = await asyncio.gather(*[_one(c) for c in citations])
+    # v1.0.5 (C4): one deadline for the whole bulk call, shared by every citation.
+    with budget(budget_seconds):
+        results = await asyncio.gather(*[_one(c) for c in citations])
     elapsed = time.monotonic() - start
 
     by_quality = {"high": 0, "medium": 0, "low": 0, "none": 0}
@@ -619,12 +677,34 @@ async def resolve_identifier(
     semantic_scholar: SemanticScholarClient | None = None,
     arxiv: ArxivClient | None = None,
     force_refresh: bool = False,
+    budget_seconds: float | None = None,
 ) -> dict:
     """Cross-convert identifiers across the five supported systems.
 
     When ``force_refresh=True`` the read-cache is bypassed and a fresh DB
     roundtrip is performed; the result is still written to cache on the way out.
+    ``budget_seconds`` bounds the call's paced requests (v1.0.5).
     """
+    with budget(budget_seconds):
+        return await _resolve_identifier(
+            identifier, from_type, to_types, cache, crossref,
+            pubmed=pubmed, openalex=openalex, semantic_scholar=semantic_scholar,
+            arxiv=arxiv, force_refresh=force_refresh,
+        )
+
+
+async def _resolve_identifier(
+    identifier: str,
+    from_type: str,
+    to_types: list[str] | None,
+    cache: Cache,
+    crossref: CrossrefClient,
+    pubmed: PubMedClient | None = None,
+    openalex: OpenAlexClient | None = None,
+    semantic_scholar: SemanticScholarClient | None = None,
+    arxiv: ArxivClient | None = None,
+    force_refresh: bool = False,
+) -> dict:
     if from_type not in _RESOLVE_TYPES:
         return {
             "error": "invalid_from_type",
@@ -669,6 +749,12 @@ async def resolve_identifier(
                 "message": f"{db_name} rate-limited; result may be incomplete",
             })
             logger.warning("resolveIdentifier: %s rate-limited", db_name)
+            return
+        except RateBudgetExhausted:
+            # v1.0.5 (C4): skipped, not failed upstream; the call carries on.
+            databases_failed.append(db_name)
+            warnings.append(_budget_warning(db_name))
+            logger.warning("resolveIdentifier: %s skipped: rate budget exhausted", db_name)
             return
         except (httpx.HTTPError, RuntimeError) as e:
             databases_failed.append(db_name)
@@ -774,6 +860,7 @@ async def verify_citation_tool(
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
         force_refresh=force_refresh,
+        budget_seconds=app_ctx.rates.bulk_budget_seconds,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -794,6 +881,7 @@ async def bulk_verify_citations_tool(
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
         force_refresh=force_refresh,
+        budget_seconds=app_ctx.rates.bulk_budget_seconds,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -818,6 +906,7 @@ async def resolve_identifier_tool(
         semantic_scholar=app_ctx.semantic_scholar,
         arxiv=app_ctx.arxiv,
         force_refresh=force_refresh,
+        budget_seconds=app_ctx.rates.bulk_budget_seconds,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
