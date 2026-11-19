@@ -400,7 +400,8 @@ def test_t10_each_variable_overrides(var):
     assert getattr(cfg, attr) == pytest.approx(1.25)
 
 
-@pytest.mark.parametrize("bad", ["0", "-1", "abc", "", "nan", "inf"])
+# CM-108H: "" is no longer invalid; an empty value is unset (test_v105_part3.py V4).
+@pytest.mark.parametrize("bad", ["0", "-1", "abc", "nan", "inf"])
 @pytest.mark.parametrize("var", sorted(_RATE_VARS))
 def test_t10_invalid_value_names_the_variable(var, bad):
     from citation_mcp.config import ConfigError, load_rate_config

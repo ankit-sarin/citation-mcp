@@ -88,23 +88,25 @@ export SEMANTIC_SCHOLAR_API_KEY=...
 
 ### Request pacing and time budget
 
-citation-mcp spaces its requests to Crossref, PubMed and Semantic Scholar so that it
-stays inside each service's rate limit, however many citations or calls are in flight,
-and gives every tool call a time budget. The pacing is shared by the whole server
-process: every tool call and request, in both the HTTP and the stdio transport, draws on
-the same per-database pacing. These settings are read once, when the process starts and
-before it serves anything. Rates must be from 0.01 to 1000 requests per second and the
-budget from 1 to 3600 seconds; a value outside its range, or not a number, stops the
-process at startup (exit status 2) with an error naming the variable. Unset means the
-default.
+citation-mcp spaces its requests to Crossref, PubMed and Semantic Scholar and gives every
+tool call a time budget. The pacing is per process: within one server process, every
+tool call and request, in both the HTTP and the stdio transport, draws on the same
+per-database pacing, however many citations or calls are in flight. It does not reach
+across processes. The services' published limits are per key, so another process using
+the same keys (a stdio instance, or a script that builds the clients directly) adds its
+own rate on top, and together they can exceed the limit. These settings are read once,
+when the process starts and before it serves anything. Rates must be from 0.01 to 1000
+requests per second and the budget from 1 to 3600 seconds; a value outside its range,
+or not a number, stops the process at startup (exit status 2) with an error naming the
+variable. Unset or empty means the default.
 
 | Variable | Default | Unit | What it controls |
 |---|---|---|---|
 | `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` | `0.7` | requests per second | Semantic Scholar, all endpoints together (the API key's limit is 1 per second across all endpoints). |
 | `CITATION_MCP_RATE_CROSSREF_QUERY` | `2.5` | requests per second | Crossref list/query requests (title and bibliographic searches). |
 | `CITATION_MCP_RATE_CROSSREF_SINGLE` | `8` | requests per second | Crossref single-record requests (DOI lookups). |
-| `CITATION_MCP_RATE_PUBMED` | `7` | requests per second | PubMed (esearch and efetch together) when `NCBI_API_KEY` is set. Without a key PubMed stays at 3 per second and this setting is not used. |
-| `CITATION_MCP_BULK_BUDGET_SECONDS` | `210` | seconds | The time budget of every tool call: verifyCitation, bulkVerifyCitations (one budget for the whole batch) and resolveIdentifier. |
+| `CITATION_MCP_RATE_PUBMED` | `7` | requests per second | PubMed (esearch and efetch together) when `NCBI_API_KEY` is set. Without a key PubMed stays at 3 per second whatever this is set to; the value is still checked at startup, so an invalid one stops the process either way. |
+| `CITATION_MCP_BULK_BUDGET_SECONDS` | `210` | seconds | The time budget of every tool call: verifyCitation, bulkVerifyCitations (one budget for the whole batch) and resolveIdentifier. A budget much above the default can make a call run past claude.ai's 300 s tool-call limit. |
 
 Every attempt is paced, retries included. When a request, a retry wait or arXiv's 3 s
 spacing could not start before the call's budget runs out, that database is skipped for
@@ -113,6 +115,13 @@ that citation instead of waiting: it is listed in `databases_failed` with the wa
 citation. No request starts after the budget; a request already in flight may finish
 after it, within its client timeout (10–30 s). OpenAlex and arXiv are not rate-paced
 (arXiv keeps its own 3 s spacing), but they respect the budget.
+
+A client constructed directly (`CrossrefClient()`, `PubMedClient()`,
+`SemanticScholarClient()`) paces itself at the built-in default rates above, not at the
+`CITATION_MCP_*` settings, and `pacer=None` (for Crossref, `query_pacer=None` and
+`single_pacer=None`) turns its pacing off; a directly built
+`ArxivClient()` keeps its own 3 s spacing. A script that shares the server's keys must
+pass its own pacers (`citation_mcp.pacing.RatePacer`) set to its share of each limit.
 
 A result with any database failed, or with arXiv rate-limited, is cached for 24 hours
 rather than 14 days, so the gap is refilled soon. A result in which any database was

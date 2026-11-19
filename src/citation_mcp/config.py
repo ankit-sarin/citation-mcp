@@ -1,8 +1,8 @@
 """Rate and budget configuration, read once at startup (v1.0.5).
 
 Rates must lie between 0.01 and 1000 requests per second, and the budget between
-1 and 3600 seconds, inclusive. A bad value stops startup with a ConfigError
-naming the variable. No dotenv file is read; the service gets its
+1 and 3600 seconds, inclusive. An unset or empty variable takes its default. A
+bad value stops startup with a ConfigError naming the variable. No dotenv file is read; the service gets its
 environment from systemd.
 """
 
@@ -55,7 +55,8 @@ def load_rate_config(environ: Mapping[str, str] | None = None) -> RateConfig:
     values: dict[str, float] = {}
     for name, (attr, default) in _SETTINGS.items():
         raw = env.get(name)
-        if raw is None:
+        # An empty value counts as unset (CM-108H): systemd's `Environment=NAME=` sets "".
+        if raw is None or raw == "":
             values[attr] = default
         elif attr == "bulk_budget_seconds":
             values[attr] = _bounded(name, raw, *BUDGET_BOUNDS, "seconds")

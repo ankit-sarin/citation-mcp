@@ -3,10 +3,10 @@
 V1  two POST /mcp requests through the production HTTP app share one pacer per database
 V2  two concurrent tool calls through the HTTP app space their Semantic Scholar starts
 V3  an invalid setting stops the process before it serves (app construction; CLI exit code)
-V4  rate and budget bounds
+V4  rate and budget bounds; an empty value is unset (CM-108H)
 V5  a budget-skipped result is not cached (verify and resolve; match and no-match)
 V6  Crossref keeps a received response when its rate-limit-header wait would cross the deadline
-V7  an arXiv rate-limited match takes the 24 h TTL
+V7  an arXiv rate-limited match takes the 24 h TTL; so does a rate-limited resolve (CM-108H)
 V8  redaction stops at quotes and commas
 V9  the verify path's own redaction call is what protects a non-HTTP error's text
 V10 verify logs a contained error once, redacted
@@ -96,7 +96,7 @@ def _env(monkeypatch, tmp_path, **extra):
         monkeypatch.setenv(k, v)
 
 
-def _app_and_token():
+def _app_and_token(pacing=None):
     from citation_mcp.auth.storage import OAuthStorage
     from citation_mcp.auth.tokens import issue_access_token
     from citation_mcp.http_app import build_http_app
@@ -104,7 +104,7 @@ def _app_and_token():
     app = build_http_app(
         signing_key=SIGNING_KEY, issuer=ISSUER, audience=AUDIENCE,
         origin_allowlist=("https://claude.ai",), host_allowlist=(HOST, "testserver"),
-        storage=OAuthStorage(":memory:"),
+        storage=OAuthStorage(":memory:"), pacing=pacing,
     )
     token = issue_access_token(sub="user@example.com", client_id="test-client", scope="",
                                signing_key=SIGNING_KEY, issuer=ISSUER, audience=AUDIENCE)
@@ -138,9 +138,14 @@ def _sse_json(resp: httpx.Response) -> dict:
 
 
 async def test_v1_two_mcp_requests_share_one_pacer_per_database(monkeypatch, tmp_path):
+    from citation_mcp.server import build_process_pacing
+
     _env(monkeypatch, tmp_path)
     made = _install_recording_clients(monkeypatch)
-    app, token = _app_and_token()
+    # CM-108H: the app is handed this exact pacing; every client built during the requests
+    # must hold these objects, not the stdio global or a fresh set (CM-108G F2).
+    pacing = build_process_pacing()
+    app, token = _app_and_token(pacing)
     async with lifespan_manager(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url=f"http://{HOST}") as http:
@@ -155,6 +160,11 @@ async def test_v1_two_mcp_requests_share_one_pacer_per_database(monkeypatch, tmp
     assert all(c.single_pacer is cr[0].single_pacer for c in cr), "Crossref single-record pacer shared"
     assert all(c.pacer is pm[0].pacer for c in pm), "PubMed pacer shared"
     assert all(c._spacing_lock is ax[0]._spacing_lock for c in ax), "arXiv spacing state shared"
+    assert all(c.pacer is pacing.semantic_scholar for c in s2), "the app's own Semantic Scholar pacer"
+    assert all(c.query_pacer is pacing.crossref_query for c in cr), "the app's own Crossref query pacer"
+    assert all(c.single_pacer is pacing.crossref_single for c in cr), "the app's own Crossref single pacer"
+    assert all(c.pacer is pacing.pubmed for c in pm), "the app's own PubMed pacer"
+    assert all(c._spacing is pacing.arxiv_spacing for c in ax), "the app's own arXiv spacing"
 
 
 async def test_v2_concurrent_tool_calls_space_semantic_scholar_starts(monkeypatch, tmp_path):
@@ -244,6 +254,15 @@ def test_v4_bounds(var, value, ok):
         with pytest.raises(ConfigError) as exc:
             load_rate_config({var: value})
         assert var in str(exc.value)
+
+
+def test_v4_empty_value_is_unset():
+    """CM-108H: an empty value (systemd `Environment=NAME=`) takes the default."""
+    from citation_mcp.config import RateConfig, _SETTINGS, load_rate_config
+
+    assert load_rate_config({name: "" for name in _SETTINGS}) == RateConfig()
+    for name in _SETTINGS:
+        assert load_rate_config({name: ""}) == RateConfig(), name
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +391,26 @@ async def test_v7_arxiv_rate_limited_match_gets_24_hours(cache, monkeypatch):
         await crossref.aclose()
     assert r["match_quality"] != "none"
     assert "arxiv" not in r["databases_failed"]
+    assert any(w.get("source") == "arxiv" and "rate-limited" in w.get("message", "") for w in r["warnings"])
+    assert seen == [DAY]
+
+
+async def test_v7_arxiv_rate_limited_resolve_gets_24_hours(cache, monkeypatch):
+    """CM-108H: the resolve twin of V7 (CM-108G F1)."""
+    from citation_mcp.databases import arxiv as axmod
+    from citation_mcp.server import resolve_identifier
+
+    monkeypatch.setattr(axmod, "_BASE_BACKOFF", 0.0)
+    monkeypatch.setattr(axmod, "random", types.SimpleNamespace(uniform=lambda a, b: 0.0))
+    arxiv = make_mock_arxiv_client(lambda r: httpx.Response(429, text="slow down"))
+    crossref = make_mock_crossref_client(polack_crossref_handler)
+    seen = _spy_ttl(cache)
+    try:
+        r = await resolve_identifier("2103.04567", "arxiv", None, cache, crossref, arxiv=arxiv)
+    finally:
+        await arxiv.aclose()
+        await crossref.aclose()
+    assert r["databases_failed"] == []
     assert any(w.get("source") == "arxiv" and "rate-limited" in w.get("message", "") for w in r["warnings"])
     assert seen == [DAY]
 
