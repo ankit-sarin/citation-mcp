@@ -211,13 +211,14 @@ If you use citation-mcp in your research, please cite the archived release on Ze
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24215783.svg)](https://doi.org/10.5281/zenodo.24215783)
 
 - All versions (concept DOI; always resolves to the latest release): [10.5281/zenodo.24215783](https://doi.org/10.5281/zenodo.24215783)
+- Version 1.0.5: [10.5281/zenodo.24357086](https://doi.org/10.5281/zenodo.24357086)
 - Version 1.0.4: [10.5281/zenodo.24273417](https://doi.org/10.5281/zenodo.24273417)
 - Version 1.0.3: [10.5281/zenodo.24270761](https://doi.org/10.5281/zenodo.24270761)
 - Version 1.0.2: [10.5281/zenodo.24215784](https://doi.org/10.5281/zenodo.24215784)
 
 Cite the version DOI of the release you used, so readers can retrieve the exact code. Citation metadata is in [CITATION.cff](CITATION.cff); GitHub's "Cite this repository" button formats it as APA or BibTeX.
 
-Example: Sarin A. citation-mcp: self-hosted MCP server for citation verification. Version 1.0.4. Zenodo; 2026. doi:10.5281/zenodo.24273417
+Example: Sarin A. citation-mcp: self-hosted MCP server for citation verification. Version 1.0.5. Zenodo; 2026. doi:10.5281/zenodo.24357086
 
 ## Acknowledgements
 
