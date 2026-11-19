@@ -10,24 +10,32 @@ tagged release (SDK host-check disable, commit `b9c50aa`) shipped without
 a corresponding source-pin bump. v0.3.3 brings the pin in sync with the
 tag history.
 
-## [Unreleased]
+## [1.0.5] — 2026-11-19
+
+Rate-limit release. Tool inputs and the shape of every tool result are unchanged.
 
 ### Added
 - **Per-database request pacing.** Crossref, PubMed and Semantic Scholar requests are
-  now spaced so that citation-mcp stays inside each service's published rate limit,
-  however many citations or calls are in flight. The pacing is shared by the whole
-  server process: every tool call and every request, in both the HTTP and the stdio
-  transport, draws on the same per-database pacing. Every attempt is paced, retries
-  included. Crossref list/query searches and single-record DOI lookups are paced
+  now spaced at configured rates. The pacing is per process: within one server process,
+  every tool call and every request, in both the HTTP and the stdio transport, draws on
+  the same per-database pacing, however many citations or calls are in flight. It does
+  not reach across processes. The services' published limits are per key, so another
+  process using the same keys (a stdio instance, or a script that builds the clients
+  directly) adds its own rate, and together they can exceed the limit. A client
+  constructed directly uses the built-in default rates, not the `CITATION_MCP_*`
+  settings, and `pacer=None` (Crossref: `query_pacer=None`, `single_pacer=None`) turns
+  its pacing off; a caller that shares the keys must pass its own pacers set to its
+  share. Every attempt is paced, retries included. Crossref list/query searches and single-record DOI lookups are paced
   separately, because Crossref limits them separately. OpenAlex and arXiv are
   unchanged (arXiv already keeps 3 s between requests).
 - **Configurable rates**, read once when the server process starts, before it serves
   anything (defaults in brackets): `CITATION_MCP_RATE_SEMANTIC_SCHOLAR` (0.7 req/s),
   `CITATION_MCP_RATE_CROSSREF_QUERY` (2.5), `CITATION_MCP_RATE_CROSSREF_SINGLE` (8),
-  `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3). Rates must be
-  from 0.01 to 1000 requests per second. A value outside that range, or not a number,
-  stops the process at startup: the command exits with status 2 and an error naming the
-  variable.
+  `CITATION_MCP_RATE_PUBMED` (7, with an NCBI key; keyless stays at 3 whatever it is set
+  to, though the value is still checked at startup). Rates must be from 0.01 to 1000
+  requests per second. A value outside that range, or not a number, stops the process
+  at startup: the command exits with status 2 and an error naming the variable. An unset
+  or empty variable takes its default.
 - **A time budget per tool call**, `CITATION_MCP_BULK_BUDGET_SECONDS` (210 s; allowed
   1 to 3600 s, checked at startup like the rates). It applies
   to verifyCitation, bulkVerifyCitations (one budget for the whole batch) and
@@ -36,8 +44,9 @@ tag history.
   that database is skipped for that citation instead of waiting. It is listed in
   `databases_failed` with the warning `"<db> skipped: rate budget exhausted"`, and the
   call still returns a result for every citation. A request already in flight may finish
-  after the budget, within its client timeout (10–30 s), which keeps a call inside the
-  300 s tool-call limit. A response Crossref has already returned is kept even when the
+  after the budget, within its client timeout (10–30 s), which at the 210 s default keeps
+  a call inside claude.ai's 300 s tool-call limit; a budget much above the default can
+  exceed it. A response Crossref has already returned is kept even when the
   wait its rate-limit headers ask for would run past the budget (the wait is skipped).
 - README: an Acknowledgements section, including the citation requested for Semantic
   Scholar data, and a "Request pacing and time budget" section documenting the five
@@ -65,7 +74,11 @@ tag history.
 ### Unchanged
 - The shape of every tool result: no new keys, no changed field types.
 - Matching decisions, the Retry-After handling and the backoff schedule.
-- No version strings change in this entry.
+
+### Release
+- Version bumped 1.0.4 → 1.0.5 (`pyproject.toml`, `citation_mcp.__version__`, `uv.lock`,
+  `CITATION.cff`).
+- Test suite at release: 568 passed, 4 skipped.
 
 ## [1.0.4] — 2026-11-16
 
